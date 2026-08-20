@@ -1,0 +1,31 @@
+# Opcional: levantar los dos servicios en contenedores.
+# Para desarrollo local basta con `make dev`.
+services:
+  backend:
+    image: python:3.11-slim
+    working_dir: /app/backend
+    command: >
+      bash -lc "apt-get update -qq && apt-get install -y --no-install-recommends ffmpeg
+      && pip install -e . && python -m uvicorn app.main:app --host 0.0.0.0 --port 8000"
+    environment:
+      DATA_DIR: /app/backend/data
+      CORS_ORIGINS: http://localhost:3000
+    env_file:
+      - backend/.env
+    volumes:
+      - ./:/app
+    ports:
+      - "8000:8000"
+
+  frontend:
+    image: node:22-slim
+    working_dir: /app/frontend
+    command: bash -lc "npm install && npm run dev -- --hostname 0.0.0.0"
+    environment:
+      BACKEND_URL: http://backend:8000
+    volumes:
+      - ./:/app
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend

@@ -1,0 +1,218 @@
+"""Puntuacion y descripcion de los momentos: Gemini si hay key, heuristica si no."""
+
+from __future__ import annotations
+
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from typing import Any
+
+from ..config import CATEGORY_KEYWORDS, settings
+from ..providers.base import ScoredMoment, ScorerUnavailable
+from ..providers.gemini import GeminiScorer
+from ..providers.ratelimit import QuotaExhausted
+from ..utils import hhmmss, log
+from .candidates import normalize_scores
+from .transcribe import first_words
+
+WarnCb = Callable[[str], Awaitable[None]]
+
+# Ponderacion final entre la senal medida y el juicio del LLM.
+W_SIGNAL = 0.4
+W_LLM = 0.6
+
+
+@dataclass(slots=True)
+class Fragment:
+    """Candidato ya transcrito, listo para puntuar."""
+
+    id: str
+    t_start: float
+    t_end: float
+    t_peak: float
+    signal_score: float
+    chat_z: float
+    audio_z: float
+    unique_users: int
+    msg_count: int
+    combo: bool
+    transcript: str = ""
+    language: str = ""
+    words: list[dict[str, Any]] = field(default_factory=list)
+
+    @property
+    def duration(self) -> float:
+        return max(0.0, self.t_end - self.t_start)
+
+    def to_prompt_dict(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "timestamp": hhmmss(self.t_peak),
+            "duration": self.duration,
+            "signal_score": self.signal_score,
+            "msg_count": self.msg_count,
+            "unique_users": self.unique_users,
+            "audio_z": self.audio_z,
+            "transcript": self.transcript,
+        }
+
+
+def guess_category(text: str, fragment: Fragment) -> str:
+    low = (text or "").lower()
+    best, best_hits = "otro", 0
+    for category, keywords in CATEGORY_KEYWORDS.items():
+        hits = sum(1 for k in keywords if k in low)
+        if hits > best_hits:
+            best, best_hits = category, hits
+    if best_hits:
+        return best
+    # Sin texto util: el perfil de senales sigue diciendo algo.
+    if fragment.audio_z >= 3.0 and fragment.msg_count == 0:
+        return "reaccion"
+    if fragment.msg_count > 0 and fragment.audio_z < 1.0:
+        return "reaccion"
+    return "otro"
+
+
+def heuristic_scores(fragments: list[Fragment], *, chat_available: bool) -> list[ScoredMoment]:
+    """Sin LLM la app sigue funcionando: titulos y descripciones derivadas de las senales."""
+    raw = [f.signal_score for f in fragments]
+    pct = _percentiles(raw)
+    out: list[ScoredMoment] = []
+    for frag, p in zip(fragments, pct, strict=True):
+        head = first_words(frag.transcript, 8)
+        title = head or f"Momento a {hhmmss(frag.t_peak)}"
+        if chat_available and frag.msg_count:
+            ratio = max(1.0, 1.0 + frag.chat_z)
+            description = (
+                f"Pico de actividad: {frag.msg_count} mensajes en 10 s, "
+                f"{ratio:.1f}x sobre lo normal."
+            )
+        elif frag.audio_z:
+            description = (
+                f"Pico de audio de +{frag.audio_z:.1f} sigma sobre el nivel habitual "
+                f"del directo."
+            )
+        else:
+            description = "Pico de actividad detectado por las senales del directo."
+        if frag.combo:
+            description += " Coinciden pico de audio y pico de chat."
+        out.append(
+            ScoredMoment(
+                id=frag.id,
+                title=title[:120],
+                description=description,
+                category=guess_category(frag.transcript, frag),
+                clip_score=round(p * 100.0, 1),
+                worth_clipping=True,
+            )
+        )
+    return out
+
+
+def _percentiles(values: list[float]) -> list[float]:
+    """Percentil (0-1) de cada valor dentro de la propia lista."""
+    n = len(values)
+    if n == 0:
+        return []
+    if n == 1:
+        return [0.75]
+    order = sorted(range(n), key=lambda i: values[i])
+    pct = [0.0] * n
+    for rank, idx in enumerate(order):
+        pct[idx] = rank / (n - 1)
+    return pct
+
+
+class ScoringEngine:
+    def __init__(self, *, on_warning: WarnCb | None = None) -> None:
+        self.on_warning = on_warning
+        self.gemini = GeminiScorer()
+        self.provider = "heuristic"
+
+    async def _warn(self, message: str) -> None:
+        log.warning(message)
+        if self.on_warning:
+            await self.on_warning(message)
+
+    async def prepare(self) -> str:
+        self.provider = "gemini" if self.gemini.configured else "heuristic"
+        return self.provider
+
+    async def score(
+        self, fragments: list[Fragment], *, chat_available: bool
+    ) -> tuple[list[ScoredMoment], bool]:
+        """Devuelve (scores, enriched). `enriched=False` = generado sin LLM."""
+        if not fragments:
+            return [], False
+        if self.provider != "gemini":
+            return heuristic_scores(fragments, chat_available=chat_available), False
+
+        by_id = {f.id: f for f in fragments}
+        collected: dict[str, ScoredMoment] = {}
+        batch_size = self.gemini.batch_size
+        batches = [
+            fragments[i : i + batch_size] for i in range(0, len(fragments), batch_size)
+        ]
+        degraded = False
+        for batch in batches:
+            if degraded:
+                break
+            try:
+                scored = await self.gemini.score_batch([f.to_prompt_dict() for f in batch])
+            except QuotaExhausted as exc:
+                degraded = True
+                await self._warn(f"{exc}. Puntuando con la heuristica local.")
+                break
+            except ScorerUnavailable as exc:
+                degraded = True
+                await self._warn(f"Gemini no disponible ({exc}). Puntuando con la heuristica.")
+                break
+            for item in scored:
+                if item.id in by_id:
+                    collected[item.id] = item
+
+        missing = [f for f in fragments if f.id not in collected]
+        if missing:
+            for item in heuristic_scores(missing, chat_available=chat_available):
+                collected[item.id] = item
+            if not degraded and len(missing) != len(fragments):
+                log.info("Gemini omitio %d fragmentos, completados con heuristica", len(missing))
+
+        enriched = len(collected) > len(missing)
+        return [collected[f.id] for f in fragments], enriched
+
+
+def finalize(
+    fragments: list[Fragment], scores: list[ScoredMoment]
+) -> list[dict[str, Any]]:
+    """Combina senal y LLM, filtra falsas alarmas, ordena y recorta a TOP_N."""
+    norm = normalize_scores([f.signal_score for f in fragments])
+    rows: list[dict[str, Any]] = []
+    for frag, score, nrm in zip(fragments, scores, norm, strict=True):
+        if not score.worth_clipping:
+            continue
+        final = W_SIGNAL * nrm + W_LLM * (score.clip_score / 100.0)
+        rows.append(
+            {
+                "id": frag.id,
+                "t_start": frag.t_start,
+                "t_end": frag.t_end,
+                "t_peak": frag.t_peak,
+                "title": score.title or f"Momento a {hhmmss(frag.t_peak)}",
+                "description": score.description,
+                "category": score.category,
+                "final_score": round(min(1.0, max(0.0, final)), 4),
+                "signal_score": frag.signal_score,
+                "clip_score": score.clip_score,
+                "chat_z": frag.chat_z,
+                "audio_z": frag.audio_z,
+                "unique_users": frag.unique_users,
+                "msg_count": frag.msg_count,
+                "combo": frag.combo,
+                "transcript": frag.transcript,
+                "words": frag.words,
+                "language": frag.language,
+            }
+        )
+    rows.sort(key=lambda r: -r["final_score"])
+    return rows[: settings.top_n]
