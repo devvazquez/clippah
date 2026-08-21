@@ -50,7 +50,9 @@ export function ClipCard({ clip, src }: { clip: Clip; src?: string }) {
         {src ? (
           // eslint-disable-next-line jsx-a11y/media-has-caption -- los subtitulos van quemados
           <video
-            src={src}
+            // El fragmento #t hace que el navegador busque ese segundo y pinte el
+            // fotograma; con preload="metadata" a secas se queda en negro.
+            src={`${src}#t=0.5`}
             controls
             preload="metadata"
             playsInline
@@ -93,11 +95,9 @@ export function ClipCard({ clip, src }: { clip: Clip; src?: string }) {
           </p>
         ) : null}
 
-        {clip.video_title ? (
-          <p className="truncate text-[11px] text-ink-faint" title={clip.video_title}>
-            {clip.video_title}
-            {clip.t_start != null ? ` · ${hhmmss(clip.t_start)}` : ""}
-          </p>
+        {clip.t_start != null ? (
+          // El directo lo dice la cabecera del grupo: aqui solo hace falta el minuto.
+          <p className="tnum text-[11px] text-ink-faint">minuto {hhmmss(clip.t_start)}</p>
         ) : null}
 
         <div className="mt-auto flex items-center gap-1.5 pt-1">

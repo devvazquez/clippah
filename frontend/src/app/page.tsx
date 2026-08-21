@@ -5,7 +5,6 @@ import { toast } from "sonner";
 import { ClipGallery } from "@/components/ClipGallery";
 import { QueueForm } from "@/components/QueueForm";
 import { QueueList } from "@/components/QueueList";
-import { SocialLinks } from "@/components/SocialLinks";
 import { isConfigured, listClips, listRequests, signClips, watchTable } from "@/lib/supabase";
 import type { Clip, ClipRequest } from "@/lib/types";
 
@@ -114,13 +113,6 @@ export default function Page() {
           <ClipGallery clips={clips} urls={urls} loading={loading} />
         </div>
       </div>
-
-      <footer className="mt-6 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
-        <SocialLinks />
-        <span className="text-[11px] text-ink-faint">
-          Música de Kevin MacLeod (CC BY 3.0): acredítala al publicar.
-        </span>
-      </footer>
     </div>
   );
 }

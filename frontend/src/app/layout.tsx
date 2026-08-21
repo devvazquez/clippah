@@ -4,9 +4,9 @@ import { SocialLinks } from "@/components/SocialLinks";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  title: "clipper — momentos destacados de VODs",
+  title: "clipper — clips verticales de tus directos",
   description:
-    "Pega un VOD de Twitch o YouTube y obtén una lista de momentos con descripción, fotograma y timestamp.",
+    "Encola directos de Twitch o YouTube y descarga los clips verticales ya montados, listos para subir.",
 };
 
 export default function RootLayout({ children }: { children: React.ReactNode }) {
@@ -18,7 +18,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
           <footer className="mt-12 flex flex-wrap items-center justify-between gap-3 border-t border-line pt-4">
             <SocialLinks />
             <span className="text-[11px] text-ink-faint">
-              Los clips salen con estas tres redes quemadas al pie.
+              Estas tres redes van quemadas en cada clip. Música de Kevin MacLeod
+              (CC BY 3.0): acredítala al publicar.
             </span>
           </footer>
         </div>
