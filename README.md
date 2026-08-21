@@ -140,6 +140,22 @@ paga es recorrer el vídeo (~6 min por cada 30 min de VOD). Los fotogramas se ca
 que reanalizar es gratis. Coste en tokens: ~1.100 por fotograma, unos 110.000 para un VOD
 de 33 min. Se desactiva con `VISION_ENABLED=0`.
 
+**6. El criterio no es «aquí pasa algo», es «esto funciona como clip».** El prompt de
+puntuación juzga potencial viral con criterios explícitos: gancho en los primeros 1-2
+segundos, se entiende sin contexto, tiene remate, una emoción fuerte y clara, y se puede
+resumir en una frase. Penaliza conversación cotidiana, explicaciones, chistes internos y
+gameplay competente pero normal — y dice explícitamente que la reacción del chat *no*
+convierte un momento en viral, porque los suyos reaccionan a cosas que a un desconocido
+no le dicen nada. `clip_score` se reserva: 80-100 solo si lo compartirías tú, 60-79 vale
+para los seguidores del canal, por debajo de 50 no es un clip.
+
+Medido re-puntuando los mismos 7 fragmentos de un VOD real, el ranking se invierte: con
+el prompt anterior mandaban «Frustración con el trabajo» (55) y «Discusión sobre un
+compañero» (45); con el de viralidad suben «Reacción a muñeca gigante» (45), «Susto con
+cara gigante» (40) y «Game Over y frustración» (35), y la charla cae a 25/20/15/10. Cada
+momento trae además su `hook`: qué se ve u oye en los primeros 2 segundos, que es lo que
+te dice si hay que recortar el arranque.
+
 ### Solo se transcriben los candidatos
 
 30 candidatos × 40 s = **20 minutos** de audio, frente a las 6 horas del VOD. Esta decisión

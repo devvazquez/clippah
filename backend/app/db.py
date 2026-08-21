@@ -11,7 +11,7 @@ import aiosqlite
 
 from .config import settings
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS videos (
@@ -96,6 +96,7 @@ CREATE TABLE IF NOT EXISTS moments (
     thumb_path    TEXT,
     source        TEXT NOT NULL DEFAULT 'signals',   -- signals | vision
     vision_note   TEXT NOT NULL DEFAULT '',
+    hook          TEXT NOT NULL DEFAULT '',          -- que engancha en los primeros 2 s
     rank          INTEGER NOT NULL DEFAULT 0,
     created_at    REAL NOT NULL
 );
@@ -144,6 +145,12 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
                 await conn.execute(ddl)
             except Exception:  # noqa: BLE001 - la columna ya existe en bases nuevas
                 pass
+    if current < 3:
+        # v3: el gancho de los primeros segundos, clave para que un clip funcione.
+        try:
+            await conn.execute("ALTER TABLE moments ADD COLUMN hook TEXT NOT NULL DEFAULT ''")
+        except Exception:  # noqa: BLE001 - ya existe en bases nuevas
+            pass
     if current != SCHEMA_VERSION:
         await conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 

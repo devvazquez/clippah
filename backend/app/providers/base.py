@@ -88,6 +88,8 @@ class ScoredMoment:
     category: str
     clip_score: float
     worth_clipping: bool
+    # Que engancha en los primeros 2 segundos. Si esto esta vacio, no hay clip.
+    hook: str = ""
 
 
 class ScorerUnavailable(RuntimeError):

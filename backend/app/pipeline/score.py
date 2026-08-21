@@ -134,6 +134,7 @@ def heuristic_scores(fragments: list[Fragment], *, chat_available: bool) -> list
                 category=guess_category(frag.transcript, frag),
                 clip_score=round(p * 100.0, 1),
                 worth_clipping=True,
+                hook=first_words(frag.transcript, 6),
             )
         )
     return out
@@ -236,6 +237,7 @@ def finalize(
                 "title": score.title or f"Momento a {hhmmss(frag.t_peak)}",
                 "description": score.description,
                 "category": score.category,
+                "hook": score.hook,
                 "final_score": round(min(1.0, max(0.0, final)), 4),
                 "signal_score": frag.signal_score,
                 "clip_score": score.clip_score,

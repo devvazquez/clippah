@@ -114,6 +114,7 @@ def _moment_out(row: dict[str, Any]) -> MomentOut:
         thumbnail_url=f"/api/moments/{row['id']}/thumbnail",
         source=row.get("source") or "signals",
         vision_note=str(row.get("vision_note") or ""),
+        hook=str(row.get("hook") or ""),
     )
 
 

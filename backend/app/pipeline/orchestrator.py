@@ -378,7 +378,8 @@ async def run_pipeline(ctx: JobContext) -> int:
         # El LLM descarto todo: nos quedamos con los mejores por senal para no
         # devolver una pantalla vacia.
         await ctx.warn(
-            "El modelo descarto todos los candidatos; se muestran los mejores por senal."
+            "Ninguno de los candidatos daria para un clip que funcione fuera del canal, "
+            "segun el modelo. Se muestran los mejores por senal."
         )
         for s in scores:
             s.worth_clipping = True
@@ -394,8 +395,8 @@ async def run_pipeline(ctx: JobContext) -> int:
             """INSERT INTO moments (id, job_id, video_id, t_start, t_end, t_peak, title,
                    description, category, final_score, signal_score, clip_score, chat_z,
                    audio_z, unique_users, msg_count, combo, transcript, words, language,
-                   enriched, rank, created_at, source, vision_note)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   enriched, rank, created_at, source, vision_note, hook)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 row["id"], ctx.job_id, video_id, row["t_start"], row["t_end"], row["t_peak"],
                 row["title"], row["description"],
@@ -405,6 +406,7 @@ async def run_pipeline(ctx: JobContext) -> int:
                 1 if row["combo"] else 0, row["transcript"], db.dumps(row["words"]),
                 row["language"], 1 if enriched else 0, rank, now,
                 row.get("source", "signals"), row.get("vision_note", ""),
+                row.get("hook", ""),
             ),
         )
 

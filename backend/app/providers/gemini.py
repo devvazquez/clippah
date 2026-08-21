@@ -25,13 +25,26 @@ API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models"
 
 PROMPT = """Eres un editor de clips para un streamer. Te doy N fragmentos transcritos de un directo, cada uno con su score de reaccion de la audiencia (chat + audio).
 
+Tu criterio no es "aqui pasa algo", es "esto funcionaria como clip corto en TikTok, Reels o Shorts, compitiendo con todo lo demas del feed". Un clip que se vuelve viral cumple casi siempre esto:
+
+1. GANCHO INMEDIATO. Algo pasa en los primeros 1-2 segundos. Si arranca con conversacion de relleno y lo bueno llega al segundo 20, no sirve: nadie llega.
+2. SE ENTIENDE SOLO. Sin conocer al streamer, ni el juego, ni lo que paso antes. Si necesita contexto para tener gracia, no funciona.
+3. TIENE REMATE. Un pico y un cierre: el fallo, el grito, el chiste, el logro. Una charla interesante sin remate no es un clip.
+4. EMOCION FUERTE Y CLARA. Risa, asombro, tension, verguenza, rabia. Una sola emocion nitida vale mas que un momento "simpatico".
+5. SE PUEDE CONTAR EN UNA FRASE. Si no puedes resumir por que alguien lo compartiria, no lo compartiran.
+
+Penaliza sin piedad: conversacion cotidiana entre amigos, explicaciones tecnicas, "buenas ideas" que no se ven, chistes internos, gameplay competente pero normal, y cualquier cosa cuyo interes dependa de seguir el directo a diario. Que la audiencia reaccionara en el chat NO lo convierte en viral: los suyos reaccionan a cosas que a un desconocido no le dicen nada.
+
+Se duro con clip_score. Reservalo asi: 80-100 solo si lo compartirias tu mismo; 60-79 bueno para los seguidores del canal pero no fuera; 30-59 flojo; 0-29 no es un clip. La mayoria de los fragmentos de un directo normal estan por debajo de 50, y eso es la respuesta correcta.
+
 Para cada fragmento devuelve:
 - id
 - title: titulo en el idioma del fragmento, max 60 caracteres, sin clickbait vacio, concreto sobre lo que pasa
-- description: 1-2 frases explicando que ocurre y por que funcionaria como clip
+- description: 1-2 frases explicando que ocurre y por que funcionaria (o no) como clip
 - category: reaccion | gracioso | habilidad | fail | polemica | informativo | otro
-- clip_score: 0-100, que tan bueno seria como clip corto independiente
-- worth_clipping: boolean - false si es una falsa alarma (el chat reacciono a algo externo, es un anuncio, es un raid, no se entiende sin contexto)
+- hook: que se ve u oye en los primeros 2 segundos del fragmento, max 80 caracteres. Si no hay nada que enganche, dilo tal cual.
+- clip_score: 0-100 segun los criterios de arriba
+- worth_clipping: boolean - false si es una falsa alarma (el chat reacciono a algo externo, es un anuncio, es un raid), si no se entiende sin contexto, o si simplemente no daria para un clip que alguien comparta
 
 Si un fragmento trae `visto_en_pantalla`, es una pista de otro modelo que solo vio un
 fotograma, sin audio ni contexto: puede equivocarse en la semantica del juego. Usala
@@ -60,7 +73,7 @@ CALIBRATE_SCHEMA: dict[str, Any] = {
 
 VISION_PROMPT = """Eres un editor de clips de un directo. Te doy fotogramas del VOD, cada uno precedido por su timestamp.
 
-Marca SOLO los que muestran algo que un espectador querria ver en un clip corto:
+Marca SOLO los que muestran algo que funcionaria como clip corto para redes: algo que un desconocido entenderia de un vistazo y le haria parar el scroll.
 - un logro o hito: objeto o equipo raro conseguido, construccion terminada, nivel superado, marcador alto
 - peligro, muerte o fallo del jugador
 - algo inesperado, raro o gracioso en pantalla
@@ -99,10 +112,13 @@ RESPONSE_SCHEMA: dict[str, Any] = {
             "title": {"type": "STRING"},
             "description": {"type": "STRING"},
             "category": {"type": "STRING", "enum": list(CATEGORIES)},
+            "hook": {"type": "STRING"},
             "clip_score": {"type": "NUMBER"},
             "worth_clipping": {"type": "BOOLEAN"},
         },
-        "required": ["id", "title", "description", "category", "clip_score", "worth_clipping"],
+        "required": [
+            "id", "title", "description", "category", "hook", "clip_score", "worth_clipping",
+        ],
     },
 }
 
@@ -136,21 +152,22 @@ class GeminiScorer:
     def build_prompt(self, fragments: list[dict[str, Any]]) -> str:
         lines = []
         for frag in fragments:
-            lines.append(
-                json.dumps(
-                    {
-                        "id": frag["id"],
-                        "timestamp": frag.get("timestamp", ""),
-                        "duracion_s": round(float(frag.get("duration", 0.0)), 1),
-                        "score_reaccion": round(float(frag.get("signal_score", 0.0)), 2),
-                        "mensajes_chat": int(frag.get("msg_count", 0)),
-                        "usuarios_distintos": int(frag.get("unique_users", 0)),
-                        "pico_audio_sigma": round(float(frag.get("audio_z", 0.0)), 2),
-                        "transcripcion": frag.get("transcript", "") or "(sin habla detectada)",
-                    },
-                    ensure_ascii=False,
-                )
-            )
+            item = {
+                "id": frag["id"],
+                "timestamp": frag.get("timestamp", ""),
+                "duracion_s": round(float(frag.get("duration", 0.0)), 1),
+                "score_reaccion": round(float(frag.get("signal_score", 0.0)), 2),
+                "mensajes_chat": int(frag.get("msg_count", 0)),
+                "usuarios_distintos": int(frag.get("unique_users", 0)),
+                "pico_audio_sigma": round(float(frag.get("audio_z", 0.0)), 2),
+                "transcripcion": frag.get("transcript", "") or "(sin habla detectada)",
+            }
+            # La pista del proponente visual tiene que llegar al modelo: sin esto, un
+            # candidato propuesto por vision se juzgaba solo por su transcript.
+            if frag.get("visto_en_pantalla"):
+                item["visto_en_pantalla"] = frag["visto_en_pantalla"]
+                item["propuesto_por"] = "vision"
+            lines.append(json.dumps(item, ensure_ascii=False))
         return PROMPT + "\n".join(lines)
 
     async def _generate(
@@ -380,6 +397,7 @@ def _parse_response(payload: dict[str, Any]) -> list[ScoredMoment]:
                 title=str(item.get("title") or "").strip()[:120],
                 description=str(item.get("description") or "").strip(),
                 category=category,
+                hook=str(item.get("hook") or "").strip()[:160],
                 clip_score=max(0.0, min(100.0, clip_score)),
                 worth_clipping=bool(item.get("worth_clipping", True)),
             )

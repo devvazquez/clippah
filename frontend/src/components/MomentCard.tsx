@@ -107,6 +107,14 @@ export function MomentCard({
           ) : null}
         </div>
         <p className="line-clamp-2 text-xs leading-relaxed text-ink-dim">{moment.description}</p>
+        {moment.hook ? (
+          <p
+            className="truncate text-[11px] text-ink-faint"
+            title={`Lo que engancha en los primeros segundos: ${moment.hook}`}
+          >
+            <span className="text-ink-dim">gancho:</span> {moment.hook}
+          </p>
+        ) : null}
 
         <div className="mt-auto flex flex-wrap items-center gap-2 pt-1.5 text-[11px] text-ink-faint tnum">
           <Badge tone="accent">{CATEGORY_LABELS[moment.category]}</Badge>

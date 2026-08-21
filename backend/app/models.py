@@ -71,6 +71,8 @@ class MomentOut(BaseModel):
     # "signals" = lo encontro la reaccion de audio/chat; "vision" = lo vio en pantalla.
     source: Literal["signals", "vision"] = "signals"
     vision_note: str = ""
+    # Que engancha en los primeros 2 s. Si esta vacio, el clip arranca flojo.
+    hook: str = ""
 
 
 class JobOut(BaseModel):

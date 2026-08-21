@@ -37,6 +37,8 @@ export type Moment = {
   /** "signals" = lo encontró la reacción de audio/chat; "vision" = lo vio en pantalla. */
   source: "signals" | "vision";
   vision_note: string;
+  /** Qué engancha en los primeros 2 s. Vacío = el clip arranca flojo. */
+  hook: string;
 };
 
 export type Video = {
