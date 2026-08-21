@@ -107,12 +107,22 @@ class Supabase:
         if r.status_code >= 400:
             raise SupabaseError(f"subida de {path} fallo ({r.status_code}): {r.text[:300]}")
 
-    async def delete(self, path: str) -> None:
-        """Borra un objeto. Que ya no exista no es un error: el fin es que no este."""
-        url = f"{self._storage}/object/{settings.supabase_bucket}/{path}"
-        r = await self._client.delete(url)
-        if r.status_code >= 400 and r.status_code != 404:
-            log.warning("no se pudo borrar %s (%s): %s", path, r.status_code, r.text[:200])
+    async def delete(self, *paths: str) -> None:
+        """Borra objetos. Que ya no existan no es un error: el fin es que no esten.
+
+        Se usa el borrado en lote y no `DELETE /object/{bucket}/{path}`, porque ese
+        endpoint rechaza la peticion si lleva `Content-Type: application/json` sin
+        cuerpo, y esa cabecera va por defecto en todo el cliente.
+        """
+        if not paths:
+            return
+        url = f"{self._storage}/object/{settings.supabase_bucket}"
+        r = await self._client.request(
+            "DELETE", url, content=json.dumps({"prefixes": list(paths)})
+        )
+        if r.status_code >= 400:
+            log.warning("no se pudo borrar %s (%s): %s",
+                        ", ".join(paths), r.status_code, r.text[:200])
 
     async def signed_url(self, path: str, *, expires_in: int = 3600) -> str:
         url = f"{self._storage}/object/sign/{settings.supabase_bucket}/{path}"
