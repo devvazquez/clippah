@@ -92,6 +92,8 @@ class ScoredMoment:
     hook: str = ""
     # Titulo para quemar en el video: otro registro que `title`, con emojis.
     clip_title: str = ""
+    # Que efectos de sonido pegan aqui: ninguno | golpe | riser_golpe.
+    sfx: str = "ninguno"
 
 
 class ScorerUnavailable(RuntimeError):

@@ -125,6 +125,11 @@ async def plan_sfx(moment: dict[str, Any]) -> list[SfxCue]:
     """
     if not settings.render_sfx:
         return []
+    # El scorer decide si el efecto pega: un riser sobre una conversacion tranquila se
+    # nota mas que su ausencia.
+    fit = str(moment.get("sfx_fit") or "ninguno").strip().lower()
+    if fit not in ("golpe", "riser_golpe"):
+        return []
     t_start = float(moment["t_start"])
     t_end = float(moment["t_end"])
     peak = clamp(float(moment["t_peak"]) - t_start, 0.0, max(0.1, t_end - t_start))
@@ -132,7 +137,7 @@ async def plan_sfx(moment: dict[str, Any]) -> list[SfxCue]:
     riser = settings.sfx_dir / settings.render_sfx_riser
     boom = settings.sfx_dir / settings.render_sfx_boom
     cues: list[SfxCue] = []
-    if riser.exists():
+    if fit == "riser_golpe" and riser.exists():
         rd = await sfx_duration(riser)
         start = peak - rd
         if start >= -0.2:  # si no cabe entero, mejor no ponerlo

@@ -201,8 +201,12 @@ Lo que se renderiza:
   no con libass, porque libass rasteriza los emojis en monocromo. Los emojis son los de
   iPhone: `make setup-emoji` baja el artwork de Apple (27 MB, no versionado por tamaño y
   por ser suyo); sin él se cae a la fuente de emoji del sistema.
-- **Efectos de sonido** (`backend/assets/sfx/`): un riser que muere exactamente en el pico
-  y un golpe encima de él. El pico es el instante que detectaron las señales o la visión,
+- **Efectos de sonido** (`backend/assets/sfx/`), y **solo cuando pegan**: eso lo decide el
+  scorer, que es quien sabe lo que pasa en el fragmento. Devuelve `riser_golpe` cuando hay
+  una subida de tensión que desemboca en algo, `golpe` cuando el remate llega sin aviso, y
+  `ninguno` para conversación tranquila o anécdotas sin punto de giro — con instrucción
+  explícita de tirar a `ninguno` ante la duda, porque un efecto mal puesto se nota más que
+  su ausencia. Cuando toca: un riser que muere exactamente en el pico y un golpe encima. El pico es el instante que detectaron las señales o la visión,
   y la ventana es asimétrica, así que cae hacia el final del clip y el riser tiene sitio
   para construir. Medido en el mp4 resultante: +16 dB durante el riser respecto al segundo
   5. Se apagan con `RENDER_SFX=0`.

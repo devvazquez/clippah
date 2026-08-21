@@ -404,8 +404,9 @@ async def run_pipeline(ctx: JobContext) -> int:
             """INSERT INTO moments (id, job_id, video_id, t_start, t_end, t_peak, title,
                    description, category, final_score, signal_score, clip_score, chat_z,
                    audio_z, unique_users, msg_count, combo, transcript, words, language,
-                   enriched, rank, created_at, source, vision_note, hook, clip_title)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   enriched, rank, created_at, source, vision_note, hook, clip_title,
+                   sfx_fit)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 row["id"], ctx.job_id, video_id, row["t_start"], row["t_end"], row["t_peak"],
                 row["title"], row["description"],
@@ -416,6 +417,7 @@ async def run_pipeline(ctx: JobContext) -> int:
                 row["language"], 1 if enriched else 0, rank, now,
                 row.get("source", "signals"), row.get("vision_note", ""),
                 row.get("hook", ""), row.get("clip_title", ""),
+                row.get("sfx_fit", "ninguno"),
             ),
         )
 

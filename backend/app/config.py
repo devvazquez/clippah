@@ -161,7 +161,8 @@ class Settings(BaseSettings):
     # justo lo que queda libre entre las dos camaras.
     render_cam_top: str = "0.018,0.062,0.300,0.298"
     render_cam_bottom: str = "0.685,0.630,0.315,0.362"
-    render_cam_band: int = 340          # alto de cada banda de camara, en px de 1920
+    render_cam_band: int = 420          # alto de cada banda de camara, en px de 1920
+                                    # (420+1080+420: el juego queda cuadrado)
 
     # --- Efectos de sonido ---
     render_sfx: bool = True
