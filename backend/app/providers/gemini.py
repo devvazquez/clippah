@@ -45,6 +45,7 @@ Para cada fragmento devuelve:
 - hook: que se ve u oye en los primeros 2 segundos del fragmento, max 80 caracteres. Si no hay nada que enganche, dilo tal cual.
 - clip_title: el titulo que va QUEMADO encima del video vertical, max 42 caracteres. Otro registro que `title`: como lo escribiria el propio streamer en el post, natural y con gracia, nada de resumen periodistico. Uno o dos emojis que aporten (el remate, la emocion), no de adorno ni al principio de la frase. Tono de internet en espanol, algo autoparodico, sin exclamaciones vacias ni mayusculas gritadas.
 - sfx: si al clip le pega un efecto de sonido de edicion. "riser_golpe" cuando hay una subida de tension que desemboca en algo (un susto, una aparicion, un remate que se ve venir): el riser sube y el golpe cae encima. "golpe" cuando el remate llega de golpe sin aviso (un fallo, una frase lapidaria, una muerte tonta). "ninguno" cuando meterlo quedaria forzado y cutre: conversacion tranquila, explicaciones, anecdotas sin punto de giro. Ante la duda, "ninguno": un efecto mal puesto se nota mas que su ausencia.
+- music: que musica de fondo le pega, muy baja, solo para que no haya silencio. "fluffing_a_duck" para lo comico y absurdo, lo mas socorrido. "sneaky_snitch" para lo travieso, lo que se hace a escondidas o con mala idea. "sneaky_adventure" para lo que tiene aire de aventura, exploracion o tension contenida. "ninguna" si el momento se sostiene solo con lo que se oye y la musica seria un estorbo.
 - clip_score: 0-100 segun los criterios de arriba
 - worth_clipping: boolean - false si es una falsa alarma (el chat reacciono a algo externo, es un anuncio, es un raid), si no se entiende sin contexto, o si simplemente no daria para un clip que alguien comparta
 
@@ -117,12 +118,16 @@ RESPONSE_SCHEMA: dict[str, Any] = {
             "hook": {"type": "STRING"},
             "clip_title": {"type": "STRING"},
             "sfx": {"type": "STRING", "enum": ["ninguno", "golpe", "riser_golpe"]},
+            "music": {
+                "type": "STRING",
+                "enum": ["ninguna", "fluffing_a_duck", "sneaky_snitch", "sneaky_adventure"],
+            },
             "clip_score": {"type": "NUMBER"},
             "worth_clipping": {"type": "BOOLEAN"},
         },
         "required": [
             "id", "title", "description", "category", "hook", "clip_title", "sfx",
-            "clip_score", "worth_clipping",
+            "music", "clip_score", "worth_clipping",
         ],
     },
 }
@@ -409,6 +414,12 @@ def _parse_response(payload: dict[str, Any]) -> list[ScoredMoment]:
                     if str(item.get("sfx") or "").strip().lower()
                     in ("ninguno", "golpe", "riser_golpe")
                     else "ninguno"
+                ),
+                music=(
+                    str(item.get("music") or "ninguna").strip().lower()
+                    if str(item.get("music") or "").strip().lower()
+                    in ("ninguna", "fluffing_a_duck", "sneaky_snitch", "sneaky_adventure")
+                    else "ninguna"
                 ),
                 clip_score=max(0.0, min(100.0, clip_score)),
                 worth_clipping=bool(item.get("worth_clipping", True)),

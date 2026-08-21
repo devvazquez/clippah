@@ -210,6 +210,11 @@ Lo que se renderiza:
   y la ventana es asimétrica, así que cae hacia el final del clip y el riser tiene sitio
   para construir. Medido en el mp4 resultante: +16 dB durante el riser respecto al segundo
   5. Se apagan con `RENDER_SFX=0`.
+- **Música de fondo** de Kevin MacLeod (CC BY 3.0): *Fluffing a Duck* para lo cómico,
+  *Sneaky Snitch* para lo travieso y *Sneaky Adventure* para lo que tiene aire de aventura.
+  La elige el scorer igual que los efectos, y puede decir «ninguna». Va a −30 dB con
+  fundidos: acompaña, no interviene. **Al publicar hay que acreditarla** (lo pide la
+  licencia): «Music: Kevin MacLeod (incompetech.com), CC BY 3.0».
 - **Las tres redes del streamer al pie**, con sus logos dibujados en código (sin descargar
   assets ni depender de la red). También aparecen en la interfaz web.
 - **Cuatro layouts.** `blur` (por defecto) escala el 16:9 completo al ancho y rellena con

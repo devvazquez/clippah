@@ -150,8 +150,9 @@ def heuristic_scores(fragments: list[Fragment], *, chat_available: bool) -> list
                 clip_score=round(p * 100.0, 1),
                 worth_clipping=True,
                 hook=first_words(frag.transcript, 6),
-                # Sin LLM no hay quien juzgue si el efecto pega: mejor no ponerlo.
+                # Sin LLM no hay quien juzgue si pegan: mejor no ponerlos.
                 sfx="ninguno",
+                music="ninguna",
             )
         )
     return out
@@ -271,6 +272,7 @@ def finalize(
                 "hook": score.hook,
                 "clip_title": score.clip_title or score.title,
                 "sfx_fit": score.sfx,
+                "music": score.music,
                 "final_score": round(min(1.0, max(0.0, final)), 4),
                 "signal_score": frag.signal_score,
                 "clip_score": score.clip_score,

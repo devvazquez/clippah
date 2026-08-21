@@ -94,6 +94,8 @@ class ScoredMoment:
     clip_title: str = ""
     # Que efectos de sonido pegan aqui: ninguno | golpe | riser_golpe.
     sfx: str = "ninguno"
+    # Que musica de fondo pega: ninguna | fluffing_a_duck | sneaky_snitch | sneaky_adventure
+    music: str = "ninguna"
 
 
 class ScorerUnavailable(RuntimeError):

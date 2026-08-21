@@ -31,7 +31,7 @@ from .ingest import (
 from .score import Fragment, ScoringEngine, finalize
 from .signals import compute_signals
 from .transcribe import TranscriptionEngine, refine_bounds
-from .vision import VisionProposer, sample_frames
+from .vision import VisionProposer, detect_cam_layout, sample_frames
 
 # Reparto del progreso por etapa (limites superiores).
 STAGE_BOUNDS = {
@@ -282,6 +282,17 @@ async def run_pipeline(ctx: JobContext) -> int:
                 width=settings.vision_frame_width,
                 progress=lambda pct, msg: ctx.stage_progress("vision", 0.7 * pct, msg),
             )
+            # Los fotogramas ya estan: localizar las webcams sale gratis, y el render
+            # los necesita para encuadrar sin colarse en el juego.
+            layout = await asyncio.to_thread(
+                detect_cam_layout, [f.path for f in frames_sampled]
+            )
+            if layout:
+                await db.execute(
+                    "UPDATE videos SET cam_layout=? WHERE id=?",
+                    (db.dumps(layout), video_id),
+                )
+                video_row["cam_layout"] = db.dumps(layout)
             visual_hits = await proposer.propose(
                 frames_sampled,
                 progress=lambda pct, msg: ctx.stage_progress("vision", 0.7 + 0.3 * pct, msg),
@@ -405,8 +416,8 @@ async def run_pipeline(ctx: JobContext) -> int:
                    description, category, final_score, signal_score, clip_score, chat_z,
                    audio_z, unique_users, msg_count, combo, transcript, words, language,
                    enriched, rank, created_at, source, vision_note, hook, clip_title,
-                   sfx_fit)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   sfx_fit, music)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 row["id"], ctx.job_id, video_id, row["t_start"], row["t_end"], row["t_peak"],
                 row["title"], row["description"],
@@ -417,7 +428,7 @@ async def run_pipeline(ctx: JobContext) -> int:
                 row["language"], 1 if enriched else 0, rank, now,
                 row.get("source", "signals"), row.get("vision_note", ""),
                 row.get("hook", ""), row.get("clip_title", ""),
-                row.get("sfx_fit", "ninguno"),
+                row.get("sfx_fit", "ninguno"), row.get("music", "ninguna"),
             ),
         )
 

@@ -69,6 +69,7 @@ class RenderResult:
     captions: int
     size_bytes: int = 0
     sfx: int = 0
+    music: str = ""
     social: bool = False
 
 
@@ -87,8 +88,10 @@ class RenderOptions:
     uppercase: bool | None = None
     focus_x: float = 0.5          # centro del recorte en modo crop (0-1)
     facecam: tuple[float, float, float, float] | None = None  # x,y,w,h en fraccion
+    cam_layout: dict[str, list[float]] | None = None  # detectado por vision.py
     words: list[Word] = field(default_factory=list)
     sfx: list[SfxCue] = field(default_factory=list)
+    music: str = ""               # nombre del fichero en assets/music (vacio = ninguna)
     social: bool | None = None
 
 
@@ -146,6 +149,27 @@ async def plan_sfx(moment: dict[str, Any]) -> list[SfxCue]:
     if boom.exists():
         cues.append(SfxCue(t=peak, name=boom.name, gain_db=settings.render_sfx_boom_db))
     return cues
+
+
+MUSIC_FILES = {
+    "fluffing_a_duck": "fluffing-a-duck.mp3",
+    "sneaky_snitch": "sneaky-snitch.mp3",
+    "sneaky_adventure": "sneaky-adventure.mp3",
+}
+
+
+def music_file(choice: str) -> Path | None:
+    """Fichero de la pista elegida por el scorer, si existe."""
+    if not settings.render_music:
+        return None
+    key = (choice or "").strip().lower()
+    if key in ("", "ninguna", "none"):
+        return None
+    name = MUSIC_FILES.get(key, key if key.endswith(".mp3") else "")
+    if not name:
+        return None
+    path = settings.music_dir / name
+    return path if path.exists() else None
 
 
 def clips_dir() -> Path:
@@ -256,27 +280,45 @@ def _layout_filters(layout: str, opts: RenderOptions) -> list[str]:
         ]
 
     if layout == "cams":
-        # El gameplay al centro y ampliado, con una camara arriba y otra abajo. Es el
-        # layout natural para un directo que ya lleva las dos webcams compuestas dentro
-        # del 16:9: recortar el centro deja fuera las dos, y cada una se recoloca en su
-        # banda a ancho completo.
-        top = settings.cam_rect(settings.render_cam_top)
-        bottom = settings.cam_rect(settings.render_cam_bottom)
+        # El gameplay al centro y ampliado, con una camara arriba y otra abajo. El
+        # recorte del juego se toma del hueco entre las dos camaras: asi no se cuelan
+        # por los lados, que es lo que pasaba recortando el centro a ciegas.
+        det = opts.cam_layout or {}
+        top = tuple(det["top"]) if det.get("top") else settings.cam_rect(settings.render_cam_top)
+        bottom = (
+            tuple(det["bottom"]) if det.get("bottom")
+            else settings.cam_rect(settings.render_cam_bottom)
+        )
         band = max(120, min(settings.render_cam_band, (OUT_H - 400) // 2))
         game_h = OUT_H - 2 * band
-        fx = clamp(opts.focus_x, 0.0, 1.0)
         if not (top and bottom):
             log.warning("coordenadas de camara invalidas: se cae al layout blur")
         else:
             tx, ty, tw, th = top
             bx, by, bw, bh = bottom
+            gx0, gx1 = det.get("game_x") or (tx + tw, bx)
+            gx0, gx1 = clamp(gx0, 0.0, 1.0), clamp(gx1, 0.0, 1.0)
+            if gx1 - gx0 < 0.12:      # hueco irreal: mejor el centro
+                gx0, gx1 = 0.30, 0.70
+            safe_w = gx1 - gx0
+            # Recorte con la proporcion de la banda de juego, tan grande como quepa en
+            # el hueco, y centrado en el (ligeramente por encima del medio vertical,
+            # donde esta la accion).
+            target = OUT_W / game_h
+            crop_w = safe_w
+            crop_h = crop_w * (16 / 9) / target      # en fraccion de altura
+            if crop_h > 1.0:
+                crop_h = 1.0
+                crop_w = target * crop_h * (9 / 16)
+            cx = gx0 + (safe_w - crop_w) / 2
+            cy = clamp(0.46 - crop_h / 2, 0.0, 1.0 - crop_h)
             return [
                 "[0:v]split=3[ct][cg][cb]",
                 f"[ct]crop=w=iw*{tw:.4f}:h=ih*{th:.4f}:x=iw*{tx:.4f}:y=ih*{ty:.4f},"
                 f"scale={OUT_W}:{band}:force_original_aspect_ratio=increase:flags=lanczos,"
                 f"crop={OUT_W}:{band},setsar=1[topv]",
-                f"[cg]crop=w=ih*{OUT_W / game_h:.4f}:h=ih:"
-                f"x='(iw-ih*{OUT_W / game_h:.4f})*{fx:.3f}':y=0,"
+                f"[cg]crop=w=iw*{crop_w:.4f}:h=ih*{crop_h:.4f}:"
+                f"x=iw*{cx:.4f}:y=ih*{cy:.4f},"
                 f"scale={OUT_W}:{game_h}:flags=lanczos,setsar=1[gamev]",
                 f"[cb]crop=w=iw*{bw:.4f}:h=ih*{bh:.4f}:x=iw*{bx:.4f}:y=ih*{by:.4f},"
                 f"scale={OUT_W}:{band}:force_original_aspect_ratio=increase:flags=lanczos,"
@@ -395,6 +437,22 @@ async def render_clip(
         )
         mixed.append(f"[{label}]")
         extra_index += 1
+    music_path = music_file(opts.music)
+    music_name = ""
+    if music_path is not None:
+        inputs += ["-stream_loop", "-1", "-i", str(music_path)]
+        fade = max(0.2, settings.render_music_fade_s)
+        audio_filters.append(
+            f"[{extra_index}:a]atrim=0:{duration:.3f},asetpts=N/SR/TB,"
+            f"volume={settings.render_music_db}dB,"
+            f"afade=t=in:st=0:d={fade:.2f},"
+            f"afade=t=out:st={max(0.0, duration - fade):.3f}:d={fade:.2f},"
+            f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[music]"
+        )
+        mixed.append("[music]")
+        music_name = music_path.name
+        extra_index += 1
+
     if mixed:
         audio_filters.insert(
             0,
@@ -433,7 +491,8 @@ async def render_clip(
     return RenderResult(
         path=out, width=OUT_W, height=OUT_H, duration=duration, layout=layout,
         captions=len(cues), size_bytes=out.stat().st_size,
-        sfx=len(mixed), social=show_social,
+        sfx=len([m for m in mixed if m != "[music]"]), music=music_name,
+        social=show_social,
     )
 
 

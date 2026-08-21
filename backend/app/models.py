@@ -162,6 +162,7 @@ class ClipOut(BaseModel):
     cached: bool
     download_url: str
     sfx: int = 0
+    music: str = ""
     social: bool = False
 
 

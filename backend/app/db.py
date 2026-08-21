@@ -11,7 +11,7 @@ import aiosqlite
 
 from .config import settings
 
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 8
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS videos (
@@ -28,6 +28,7 @@ CREATE TABLE IF NOT EXISTS videos (
     video_path            TEXT,
     stream_url            TEXT,
     stream_url_expires_at REAL,
+    cam_layout            TEXT,          -- rectangulos de las webcams, detectados
     created_at            REAL NOT NULL
 );
 CREATE UNIQUE INDEX IF NOT EXISTS idx_videos_platform_ext ON videos(platform, ext_id);
@@ -100,6 +101,7 @@ CREATE TABLE IF NOT EXISTS moments (
     clip_path     TEXT,                              -- mp4 vertical renderizado
     clip_title    TEXT NOT NULL DEFAULT '',          -- titulo quemado, con emojis
     sfx_fit       TEXT NOT NULL DEFAULT 'ninguno',   -- ninguno | golpe | riser_golpe
+    music         TEXT NOT NULL DEFAULT 'ninguna',   -- pista de fondo elegida
     rank          INTEGER NOT NULL DEFAULT 0,
     created_at    REAL NOT NULL
 );
@@ -173,6 +175,20 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
         try:
             await conn.execute(
                 "ALTER TABLE moments ADD COLUMN sfx_fit TEXT NOT NULL DEFAULT 'ninguno'"
+            )
+        except Exception:  # noqa: BLE001 - ya existe en bases nuevas
+            pass
+    if current < 7:
+        # v7: layout de webcams detectado a partir de los fotogramas muestreados.
+        try:
+            await conn.execute("ALTER TABLE videos ADD COLUMN cam_layout TEXT")
+        except Exception:  # noqa: BLE001 - ya existe en bases nuevas
+            pass
+    if current < 8:
+        # v8: pista de musica de fondo elegida para este momento.
+        try:
+            await conn.execute(
+                "ALTER TABLE moments ADD COLUMN music TEXT NOT NULL DEFAULT 'ninguna'"
             )
         except Exception:  # noqa: BLE001 - ya existe en bases nuevas
             pass

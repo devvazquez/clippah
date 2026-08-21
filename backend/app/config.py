@@ -171,6 +171,13 @@ class Settings(BaseSettings):
     render_sfx_riser_db: float = -7.0
     render_sfx_boom_db: float = -9.0
 
+    # --- Musica de fondo (Kevin MacLeod, CC BY 3.0: hay que acreditarla al publicar) ---
+    render_music: bool = True
+    # Muy por debajo de la voz: acompana, no interviene. -30 dB sobre el pico medido.
+    render_music_db: float = -30.0
+    render_music_fade_s: float = 1.5
+    render_music_default: str = "fluffing-a-duck.mp3"
+
     # --- Redes del streamer que se queman en el clip ---
     # Formato: "plataforma|etiqueta|url" separados por ";". Plataformas con logo:
     # twitch, youtube, tiktok.
@@ -226,6 +233,10 @@ class Settings(BaseSettings):
     def emoji_dir(self) -> Path:
         """Artwork de emojis de Apple (se instala con `make setup-emoji`)."""
         return BACKEND_ROOT / "assets" / "emoji" / "apple"
+
+    @property
+    def music_dir(self) -> Path:
+        return BACKEND_ROOT / "assets" / "music"
 
     @property
     def sfx_dir(self) -> Path:

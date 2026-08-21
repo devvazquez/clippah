@@ -433,6 +433,8 @@ async def render_moment(
             focus_x=focus_x,
             words=spec.captions,
             sfx=await render.plan_sfx(moment),
+            music=str(moment.get("music") or ""),
+            cam_layout=db.loads(video.get("cam_layout"), None),
         )
         try:
             result = await render.render_clip(source, moment, opts, out=out)
@@ -448,7 +450,7 @@ async def render_moment(
             moment_id=moment_id, width=result.width, height=result.height,
             duration=round(result.duration, 2), layout=result.layout,
             captions=result.captions, size_bytes=result.size_bytes, cached=False,
-            sfx=result.sfx, social=result.social,
+            sfx=result.sfx, music=result.music, social=result.social,
             download_url=f"/api/moments/{moment_id}/clip",
         )
 
