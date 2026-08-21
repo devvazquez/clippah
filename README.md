@@ -222,9 +222,25 @@ make check                                     # ruff check + tsc --noEmit
 # Fases 3-5: picos de audio/chat y candidatos de un VOD real
 backend/.venv/bin/python scripts/inspect_signals.py https://www.twitch.tv/videos/<id>
 
+# Alineado del chat, ventanas y ratios sobre un VOD sintetico (sin red)
+backend/.venv/bin/python scripts/check_alignment.py
+
 # Fase 10: la cuota se agota y el pipeline degrada en lugar de fallar
 backend/.venv/bin/python scripts/check_quota_degradation.py
 ```
+
+Lo que se ha comprobado contra un VOD real (Twitch, 1 h 45 min, sin API keys):
+
+| | |
+|---|---|
+| Chat | 19.942 mensajes por paginación por offset, sin tropezar con KPSDK |
+| Señales | 241 bins de audio muteado excluidos del baseline automáticamente |
+| Candidatos | picos con NMS de 45 s, ventanas de 16-45 s tras refinar bordes |
+| Transcripción | `faster-whisper` local, español detectado con 0,96-0,99 de confianza |
+| Fotogramas | 12 JPEG de 640×360 por seek remoto, sin descargar el vídeo |
+| Degradación | `GROQ_ASD=10` → evento `warning` («Cuota de groq agotada… Usando Whisper local») y el job termina con momentos |
+| SSE | corte y reconexión con `Last-Event-ID`: retoma en el evento siguiente, sin repetir ni perder |
+| Stub de render | `POST /moments/{id}/render` → 501 con el `RenderSpec` completo (50 captions con timestamps absolutos) |
 
 Para reproducir el criterio de degradación completo, pon en `backend/.env`:
 
