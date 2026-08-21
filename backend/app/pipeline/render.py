@@ -284,16 +284,16 @@ def _layout_filters(layout: str, opts: RenderOptions) -> list[str]:
         # recorte del juego se toma del hueco entre las dos camaras: asi no se cuelan
         # por los lados, que es lo que pasaba recortando el centro a ciegas.
         det = opts.cam_layout or {}
-        top = tuple(det["top"]) if det.get("top") else settings.cam_rect(settings.render_cam_top)
-        bottom = (
-            tuple(det["bottom"]) if det.get("bottom")
-            else settings.cam_rect(settings.render_cam_bottom)
-        )
+        top = tuple(det["top"]) if det.get("top") else None
+        bottom = tuple(det["bottom"]) if det.get("bottom") else None
         band = max(120, min(settings.render_cam_band, (OUT_H - 400) // 2))
         game_h = OUT_H - 2 * band
         anchor = clamp(settings.render_cam_anchor, 0.0, 1.0)
         if not (top and bottom):
-            log.warning("coordenadas de camara invalidas: se cae al layout blur")
+            # Sin camaras localizadas no hay layout de camaras: partir un video a
+            # pantalla completa en tres bandas a ciegas da un clip roto (techo arriba,
+            # suelo abajo), asi que se cae al blur, que sirve para cualquier fuente.
+            log.warning("sin layout de camaras para este video: se cae al layout blur")
         else:
             tx, ty, tw, th = top
             bx, by, bw, bh = bottom

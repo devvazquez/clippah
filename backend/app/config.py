@@ -156,14 +156,13 @@ class Settings(BaseSettings):
     render_fps: int = 30
     render_timeout_s: float = 900.0
 
-    # --- Layout de dos camaras (medido sobre los VODs de este canal) ---
-    # x,y,w,h en fraccion del fotograma 16:9. El gameplay se recorta del centro, que es
-    # justo lo que queda libre entre las dos camaras.
-    render_cam_top: str = "0.018,0.062,0.300,0.298"
-    render_cam_bottom: str = "0.685,0.630,0.315,0.362"
-    # Alto de cada banda de camara. Una webcam de 611x371 (proporcion 1.65) metida en una
-    # banda de 1080 de ancho tiene que escalarse 1.77x para cubrirla, asi que cuanto mas
-    # baja sea la banda, mas se recorta por arriba y por abajo: con 420 se tiraban 118 px
+    # --- Layout de dos camaras ---
+    # Los rectangulos de las camaras no se configuran: los mide `detect_cam_layout` sobre
+    # los fotogramas del propio VOD, porque una escena de OBS cambia de un canal a otro y
+    # hasta de un directo a otro. Si no se localizan, el render usa el layout `blur`.
+    # Alto de cada banda de camara. La webcam mide 566x319 en el fotograma, asi que para
+    # llenar los 1080 de ancho hay que escalarla 1.91x y queda de 608 de alto: cuanto mas
+    # baja sea la banda, mas se recorta por arriba y por abajo. Con 420 se tiraban 94 px
     # por lado y se comian la frente y la barbilla.
     render_cam_band: int = 520
     # De lo que sobra al recortar, que fraccion se quita por arriba. La cara vive en la
@@ -247,16 +246,6 @@ class Settings(BaseSettings):
     @property
     def sfx_dir(self) -> Path:
         return BACKEND_ROOT / "assets" / "sfx"
-
-    def cam_rect(self, raw: str) -> tuple[float, float, float, float] | None:
-        parts = [p.strip() for p in raw.split(",") if p.strip()]
-        if len(parts) != 4:
-            return None
-        try:
-            x, y, w, h = (float(p) for p in parts)
-        except ValueError:
-            return None
-        return x, y, w, h
 
     def ensure_dirs(self) -> None:
         for d in (self.data_dir, self.media_dir, self.thumbs_dir):

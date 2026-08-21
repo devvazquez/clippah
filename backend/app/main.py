@@ -34,7 +34,7 @@ from .models import (
     VideoOut,
     Word,
 )
-from .pipeline import frames, render
+from .pipeline import frames, render, vision
 from .pipeline.ingest import ProbeFailed, UnsupportedUrl, VodTooLong, probe, resolve_url
 from .pipeline.orchestrator import new_id, runner
 from .providers.gemini import GeminiScorer
@@ -403,6 +403,22 @@ async def _clip_source(video: dict[str, Any]) -> str:
     return url
 
 
+async def _cam_layout(
+    video: dict[str, Any], moment: dict[str, Any]
+) -> dict[str, list[float]] | None:
+    """Rectangulos de las webcams del VOD, detectandolos si aun no se sabian."""
+    saved = db.loads(video.get("cam_layout"), None)
+    if saved:
+        return saved
+    source = str(video.get("video_path") or "") or await _clip_source(video)
+    layout = await vision.probe_cam_layout(source, float(moment["t_start"]))
+    if layout:
+        await db.execute(
+            "UPDATE videos SET cam_layout=? WHERE id=?", (db.dumps(layout), video["id"])
+        )
+    return layout
+
+
 @api.post("/moments/{moment_id}/render", response_model=ClipOut)
 async def render_moment(
     moment_id: str,
@@ -434,7 +450,7 @@ async def render_moment(
             words=spec.captions,
             sfx=await render.plan_sfx(moment),
             music=str(moment.get("music") or ""),
-            cam_layout=db.loads(video.get("cam_layout"), None),
+            cam_layout=await _cam_layout(video, moment),
         )
         try:
             result = await render.render_clip(source, moment, opts, out=out)

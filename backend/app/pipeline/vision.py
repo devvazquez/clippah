@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 import re
 import shutil
+import tempfile
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -24,7 +25,7 @@ from ..config import settings
 from ..providers.base import ScorerUnavailable, VisionContext, VisualHit
 from ..providers.gemini import GeminiScorer
 from ..providers.ratelimit import QuotaExhausted
-from ..utils import CommandFailed, ffmpeg_bin, log
+from ..utils import CommandFailed, ffmpeg_bin, log, run
 
 ProgressCb = Callable[[float, str], Awaitable[None]]
 WarnCb = Callable[[str], Awaitable[None]]
@@ -154,6 +155,55 @@ def _mean_gradients(
     return gx / used, gy / used
 
 
+def _line_persistence(
+    frames: list[Path], lines: list[tuple[str, float, float, float]], *, limit: int = 40
+) -> list[float]:
+    """En que fraccion de los fotogramas destaca cada linea sobre su vecindario.
+
+    El promedio de gradientes dice donde estan las lineas mas marcadas, pero no si son
+    parte del layout: un borde del contenido que se repite (el horizonte, una pared) sale
+    igual de fuerte. Lo que distingue al marco de una camara es que esta en *todos* los
+    fotogramas y en el mismo pixel. Comparando cada linea con sus vecinos dentro de cada
+    fotograma, la medida no depende de la calidad del JPEG ni del brillo de la escena,
+    que era lo que arruinaba cualquier umbral sobre el gradiente medio.
+
+    `lines` son tuplas (eje, posicion, region_lo, region_hi); el eje "v" es una linea
+    vertical (perfil de columnas) y "h" una horizontal.
+    """
+    hits = [0] * len(lines)
+    used = 0
+    for path in frames[:limit]:
+        try:
+            a = np.asarray(Image.open(path).convert("L"), dtype=float)
+        except OSError:
+            continue
+        used += 1
+        gx = np.abs(np.diff(a, axis=1))
+        gy = np.abs(np.diff(a, axis=0))
+        for k, (axis, pos, lo, hi) in enumerate(lines):
+            if axis == "v":
+                band = gx[int(gx.shape[0] * lo) : int(gx.shape[0] * hi)]
+                prof = band.mean(axis=0)
+            else:
+                band = gy[:, int(gy.shape[1] * lo) : int(gy.shape[1] * hi)]
+                prof = band.mean(axis=1)
+            n = len(prof)
+            if n < 40:
+                continue
+            i = int(round(pos * n))
+            peak = float(prof[max(0, i - 2) : i + 3].max())
+            near = np.concatenate([
+                prof[max(0, i - 14) : max(0, i - 4)], prof[min(n, i + 5) : min(n, i + 15)]
+            ])
+            if len(near) < 4:
+                continue
+            if peak > LINE_PERSISTENCE_RATIO * float(near.mean()):
+                hits[k] += 1
+    if used == 0:
+        return [0.0] * len(lines)
+    return [h / used for h in hits]
+
+
 def _peak(profile: np.ndarray, n: int, lo: float, hi: float) -> tuple[float, float] | None:
     """Posicion (0-1) y fuerza del maximo del perfil dentro del rango."""
     a, b = int(n * lo), int(n * hi)
@@ -162,6 +212,15 @@ def _peak(profile: np.ndarray, n: int, lo: float, hi: float) -> tuple[float, flo
     seg = profile[a:b]
     i = int(np.argmax(seg))
     return (a + i) / n, float(seg[i])
+
+
+# Cuanto tiene que destacar una linea sobre sus pixeles vecinos, dentro de un fotograma,
+# para contar como marco en ese fotograma.
+LINE_PERSISTENCE_RATIO = 2.0
+# Y en que fraccion de los fotogramas tiene que cumplirlo para ser parte del layout. En
+# los VODs con dos camaras las cuatro lineas salen entre 0.78 y 1.00; en un video a
+# pantalla completa, donde lo detectado son bordes del contenido, alguna baja a 0.17.
+LINE_MIN_FRAMES = 0.60
 
 
 def detect_cam_layout(frames: list[Path]) -> dict[str, list[float]] | None:
@@ -198,49 +257,127 @@ def detect_cam_layout(frames: list[Path]) -> dict[str, list[float]] | None:
     if not (bottom and top):
         return None
 
-    floor = float(np.median(gx)) * 1.5
-    if min(right[1], left[1], bottom[1], top[1]) < floor:
-        log.info("bordes de camara poco marcados: se usan las coordenadas de config")
+    # Las cuatro lineas tienen que estar en casi todos los fotogramas para ser el marco
+    # del layout y no un borde del contenido que se repite.
+    inner = _line_persistence(frames, [
+        ("v", right[0], 0.0, 0.45), ("v", left[0], 0.55, 1.0),
+        ("h", bottom[0], 0.0, right[0]), ("h", top[0], left[0], 1.0),
+    ])
+    if min(inner) < LINE_MIN_FRAMES:
+        log.info(
+            "lineas poco persistentes (%s): esto no es un layout de dos camaras",
+            ", ".join(f"{v:.2f}" for v in inner),
+        )
         return None
 
-    # Las camaras van pegadas a sus esquinas.
-    top_rect = [0.0, 0.0, right[0], bottom[0]]
-    bottom_rect = [left[0], top[0], 1.0 - left[0], 1.0 - top[0]]
+    # Las camaras casi van pegadas a sus esquinas, pero casi no basta: la escena de OBS
+    # suele dejarles un margen de pocos pixeles, y ese margen escalado 1.8x para llenar
+    # la banda del vertical sale como una franja negra a un lado de la cara. Se busca
+    # tambien el borde exterior de la camara de arriba, en su esquina, y se acepta solo
+    # si marca de verdad.
+    # El barrido empieza en el 1% para no quedarse con el borde del propio fotograma, que
+    # es la linea mas marcada que hay, y cada borde se mide dentro de lo que ya se sabe de
+    # la camara: el izquierdo entre su borde superior y el inferior, el superior entre el
+    # izquierdo y el derecho. Midiendolos sobre la region entera gana el marco del video.
+    cand_x0 = _peak(rows(gx, 0.01, bottom[0]).mean(axis=0), w, 0.01, 0.08)
+    x0 = cand_x0[0] if cand_x0 else 0.0
+    cand_y0 = _peak(cols(gy, x0, right[0]).mean(axis=1), h, 0.01, 0.08)
+    y0 = cand_y0[0] if cand_y0 else 0.0
+    outer = _line_persistence(frames, [
+        ("v", x0, 0.01, bottom[0]), ("h", y0, x0, right[0]),
+    ])
+    # Si el margen no persiste, la camara va pegada a la esquina.
+    if outer[0] < LINE_MIN_FRAMES:
+        x0 = 0.0
+    if outer[1] < LINE_MIN_FRAMES:
+        y0 = 0.0
+    # El borde detectado es la linea del marco: se entra un pixel para no arrastrarla.
+    px, py = 1.0 / w, 1.0 / h
+    top_rect = [x0 + px, y0 + py, right[0] - x0 - px, bottom[0] - y0 - py]
 
-    # En estos layouts las dos camaras son del mismo tamano. Si la de abajo sale con una
-    # proporcion muy distinta, es que el borde vertical detectado no era el suyo: se
-    # deduce su ancho de la proporcion de la de arriba, anclada a la esquina derecha.
-    aspect_top = (top_rect[2] * w) / max(top_rect[3] * h, 1e-6)
-    aspect_bottom = (bottom_rect[2] * w) / max(bottom_rect[3] * h, 1e-6)
-    if aspect_top > 0 and abs(aspect_bottom / aspect_top - 1.0) > 0.25:
-        width = aspect_top * bottom_rect[3] * h / w
+    # La de abajo se compone con el tamano de la de arriba (en estos layouts son la
+    # misma fuente duplicada) sobre su esquina interior detectada. Sus bordes exteriores
+    # no son de fiar: pegados al borde del fotograma compiten con el marco del propio
+    # video y con lo que haya de overlay, y en un VOD daban 0.99 cuando la camara
+    # acababa en 0.95.
+    tw, th = top_rect[2], top_rect[3]
+    # Prediccion por simetria: el mismo margen que arriba, pero desde la otra esquina.
+    pred = (1.0 - top_rect[0] - tw, 1.0 - top_rect[1] - th)
+    det_corner = (left[0] + px, top[0] + py)
+    if abs(det_corner[0] - pred[0]) <= 0.03 and abs(det_corner[1] - pred[1]) <= 0.03:
+        bottom_rect = [det_corner[0], det_corner[1], tw, th]
+    else:
         log.info(
-            "camara inferior con proporcion %.2f frente a %.2f de la superior: "
-            "se deduce su ancho (%.3f -> %.3f)",
-            aspect_bottom, aspect_top, bottom_rect[2], width,
+            "esquina de la camara inferior detectada en (%.3f, %.3f) frente a (%.3f, "
+            "%.3f) por simetria: se usa la simetrica",
+            det_corner[0], det_corner[1], pred[0], pred[1],
         )
-        bottom_rect = [1.0 - width, top[0], width, bottom_rect[3]]
+        bottom_rect = [pred[0], pred[1], tw, th]
+
     for label, rect in (("superior", top_rect), ("inferior", bottom_rect)):
         rw, rh = rect[2] * w, rect[3] * h
         if not (0.10 <= rect[2] <= 0.45 and 0.12 <= rect[3] <= 0.50):
             log.info("camara %s con tamano improbable (%.2f x %.2f): config", label,
                      rect[2], rect[3])
             return None
-        if not (0.9 <= rw / max(rh, 1e-6) <= 2.4):
-            log.info("camara %s con proporcion improbable (%.2f): config", label, rw / rh)
+        # Una webcam viene de una fuente con proporcion estandar (4:3 = 1.33, 3:2 = 1.50,
+        # 16:9 = 1.78). Un rectangulo de 2.2:1 no es una camara: es un trozo de gameplay
+        # que ha colado sus bordes como si fueran un marco.
+        if not (1.15 <= rw / max(rh, 1e-6) <= 2.0):
+            log.info(
+                "camara %s con proporcion improbable (%.2f): no se detecta", label, rw / rh
+            )
             return None
 
     log.info(
-        "layout detectado: cam sup 0-%.3f x 0-%.3f | cam inf %.3f-1 x %.3f-1",
-        right[0], bottom[0], left[0], top[0],
+        "layout detectado: cam sup %.3f-%.3f x %.3f-%.3f | cam inf %.3f-%.3f x %.3f-%.3f",
+        top_rect[0], top_rect[0] + top_rect[2], top_rect[1], top_rect[1] + top_rect[3],
+        bottom_rect[0], bottom_rect[0] + bottom_rect[2],
+        bottom_rect[1], bottom_rect[1] + bottom_rect[3],
     )
     return {
         "top": [round(v, 4) for v in top_rect],
         "bottom": [round(v, 4) for v in bottom_rect],
         # El hueco para el juego se toma de los rectangulos finales, no de los bordes
         # detectados: si el de abajo se ha corregido, el hueco cambia con el.
-        "game_x": [round(top_rect[2], 4), round(bottom_rect[0], 4)],
+        "game_x": [round(top_rect[0] + top_rect[2], 4), round(bottom_rect[0], 4)],
     }
+
+
+async def probe_cam_layout(
+    source: str, t_start: float, *, span: float = 180.0, width: int = 960
+) -> dict[str, list[float]] | None:
+    """Localiza las camaras muestreando un trozo corto del video, sin cachear nada.
+
+    Al renderizar hace falta saber donde estan las camaras aunque el analisis no haya
+    pasado por el muestreo visual (cuando el chat servia, no hay fotogramas guardados).
+    Una escena de OBS no se mueve, asi que bastan 12 fotogramas de un tramo cualquiera,
+    pero tienen que estar *separados en el tiempo*: con 12 fotogramas de 40 segundos el
+    contenido casi no cambia entre uno y otro y sus bordes parecen igual de fijos que el
+    marco de una camara. Con 15 segundos de separacion ya se distinguen.
+    """
+    with tempfile.TemporaryDirectory(prefix="clipper-camlayout-") as tmp:
+        out_dir = Path(tmp)
+        cmd = [
+            ffmpeg_bin(),
+            "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+            "-ss", f"{max(0.0, t_start):.3f}",
+            "-i", source,
+            "-t", f"{span:.3f}",
+            "-vf", f"fps=1/{max(1.0, span / 12):g},scale={width}:-2",
+            "-q:v", "6",
+            str(out_dir / "p_%03d.jpg"),
+        ]
+        try:
+            await run(cmd, timeout=180)
+        except CommandFailed as exc:
+            log.warning("no se pudo muestrear para detectar camaras: %s", exc)
+            return None
+        frames = sorted(out_dir.glob("p_*.jpg"))
+        if len(frames) < 5:
+            log.warning("solo %d fotogramas para detectar camaras", len(frames))
+            return None
+        return detect_cam_layout(frames)
 
 
 class VisionProposer:
