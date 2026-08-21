@@ -39,6 +39,8 @@ export type Moment = {
   vision_note: string;
   /** Qué engancha en los primeros 2 s. Vacío = el clip arranca flojo. */
   hook: string;
+  /** true cuando el mp4 vertical ya está renderizado. */
+  has_clip: boolean;
 };
 
 export type Video = {
@@ -97,6 +99,18 @@ export type ProviderHealth = {
   units_today: number;
   units_limit: number | null;
   note: string;
+};
+
+export type Clip = {
+  moment_id: string;
+  width: number;
+  height: number;
+  duration: number;
+  layout: string;
+  captions: number;
+  size_bytes: number;
+  cached: boolean;
+  download_url: string;
 };
 
 export type Health = {
@@ -166,8 +180,12 @@ export const api = {
   listJobs: (limit = 12) =>
     request<{ items: JobListItem[]; total: number }>(`/api/jobs?limit=${limit}`),
   cancelJob: (id: string) => request<{ ok: boolean }>(`/api/jobs/${id}`, { method: "DELETE" }),
-  render: (momentId: string) =>
-    request<unknown>(`/api/moments/${momentId}/render`, { method: "POST" }),
+  render: (momentId: string, layout?: string) =>
+    request<Clip>(
+      `/api/moments/${momentId}/render${layout ? `?layout=${layout}` : ""}`,
+      { method: "POST" },
+    ),
+  clipUrl: (momentId: string) => `/api/moments/${momentId}/clip`,
 };
 
 /** URL del reproductor embebido, arrancando en `t_start`. */

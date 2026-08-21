@@ -12,10 +12,10 @@ enlace VOD → ingesta → señales (chat + audio) → candidatos
            → fotogramas → UI con lista de momentos
 ```
 
-> **El render del clip está fuera de alcance.** Cada momento tiene un botón
-> «Generar clip» que llama a un endpoint que devuelve `501 Not Implemented` y muestra un
-> toast. El tipo `RenderSpec` sí está implementado completo, para que enchufar el render
-> después sea trivial.
+> **El render está implementado**: «Generar clip» produce un mp4 **1080×1920** con los
+> subtítulos quemados a partir de los timestamps de palabra, y el botón pasa a
+> «Descargar clip». El `RenderSpec` sigue siendo el contrato: se expone en
+> `GET /api/moments/{id}/spec`.
 
 ---
 
@@ -170,6 +170,54 @@ recorte aleatorio.
 
 ---
 
+## El clip que sale
+
+El formato no es una elección estética: sale de medir los 30 clips más vistos de
+**auronplay** e **ibai** vía el GraphQL de Twitch.
+
+| Canal | Mediana | Media | 16-30 s |
+|---|---|---|---|
+| auronplay | 26 s | 34 s | 60 % |
+| ibai | 26 s | 28 s | 63 % |
+| un canal pequeño (los clips que hace a mano) | 20 s | 22 s | 64 % |
+
+De ahí `TARGET_CLIP_S=26`: cuando el refinado de bordes se pasa holgadamente del
+objetivo, se recorta por el final — el pico está al principio de la ventana, así que
+sobra cola, no cabeza.
+
+Lo que se renderiza:
+
+- **1080×1920, H.264, 30 fps, AAC.** Vertical de verdad, no un 16:9 con bandas.
+- **Subtítulos quemados de 2-3 palabras**, generados desde los timestamps de palabra que
+  ya produce la transcripción. Dos o tres palabras se leen de un vistazo; una frase
+  entera obliga a parar el scroll, que es lo contrario de lo que se busca. Van en
+  mayúsculas, con borde negro grueso, y **por encima del 20 % inferior** del lienzo,
+  donde las plataformas ponen su propia interfaz.
+- **Tres layouts.** `blur` (por defecto) escala el 16:9 completo al ancho y rellena con
+  una copia ampliada y desenfocada de sí mismo: no pierde nada del fotograma, lo que
+  importa en estos directos porque la webcam va **compuesta dentro** del 16:9 y un
+  recorte central se la come. `crop` recorta a 9:16 alrededor de `focus_x` (imagen más
+  grande, pero se pierden los laterales). `split` pone la webcam arriba y el juego abajo
+  cuando se le pasan las coordenadas de la cámara.
+- **El título solo se quema si lo escribió el LLM.** Sin IA el título son las primeras
+  palabras del transcript: quemarlo en el vídeo sería peor que no poner nada.
+
+Coste: unos 60 s de ffmpeg por clip de 30 s, tirando directamente del stream remoto sin
+descargar el VOD.
+
+## Ajustado a canales pequeños
+
+Un canal sin audiencia no es un canal grande en miniatura: cambia qué señales sirven.
+
+- **El chat escaso se trata como si no hubiera chat** (`MIN_CHAT_RATE_PER_MIN`), porque
+  su z-score se satura y taparía al audio sin aportar nada.
+- **Si el chat no sirve, la visión dobla su presupuesto**: muestrea un fotograma cada 10 s
+  en vez de cada 20 y acepta el doble de aciertos. Recorrer el vídeo cuesta lo mismo con
+  un intervalo que con el otro; solo cambia el gasto en tokens. Cuando el chat es la única
+  señal muerta, la pantalla es lo único que queda.
+- **La duración objetivo se toma de los clips que el propio canal publica**, no de los de
+  un canal masivo.
+
 ## Arquitectura
 
 ```
@@ -218,7 +266,9 @@ Documentación interactiva en <http://127.0.0.1:8000/docs>.
 | `DELETE` | `/jobs/{id}` | Cancela y limpia ficheros temporales |
 | `GET` | `/jobs` | Historial paginado |
 | `GET` | `/moments/{id}/thumbnail` | JPEG del fotograma (bajo demanda + caché en disco) |
-| `POST` | `/moments/{id}/render` | **STUB → 501** con el `RenderSpec` en el `detail` |
+| `POST` | `/moments/{id}/render` | Renderiza el mp4 vertical 9:16 con subtítulos. `?layout=blur\|crop\|split` |
+| `GET` | `/moments/{id}/clip` | Descarga el mp4 renderizado |
+| `GET` | `/moments/{id}/spec` | El `RenderSpec` del momento |
 | `GET` | `/health` | Estado de proveedores y cuota restante del día |
 
 Eventos SSE (progreso monótono, un `id:` por evento para poder reengancharse):

@@ -268,16 +268,24 @@ async def run_pipeline(ctx: JobContext) -> int:
     proposer = VisionProposer(on_warning=ctx.warn)
     if proposer.available:
         ctx.providers["vision"] = "gemini"
+        # Canales pequenos: sin chat util, la vision es el unico proponente que aporta
+        # algo, asi que se le duplica el muestreo. Recorrer el video cuesta lo mismo con
+        # 1 fotograma cada 10 s que cada 20: solo cambia el gasto en tokens.
+        dense = not signals.chat_usable
+        every_s = settings.vision_sample_s / 2 if dense else settings.vision_sample_s
+        if dense:
+            log.info("chat no utilizable: muestreo visual denso (1 cada %.0fs)", every_s)
         try:
             frames_sampled = await sample_frames(
                 video_row,
-                every_s=settings.vision_sample_s,
+                every_s=every_s,
                 width=settings.vision_frame_width,
                 progress=lambda pct, msg: ctx.stage_progress("vision", 0.7 * pct, msg),
             )
             visual_hits = await proposer.propose(
                 frames_sampled,
                 progress=lambda pct, msg: ctx.stage_progress("vision", 0.7 + 0.3 * pct, msg),
+                max_hits=settings.vision_max_hits * 2 if dense else None,
             )
             if proposer.context.game:
                 ctx.providers["vision_game"] = proposer.context.game

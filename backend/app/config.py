@@ -132,6 +132,29 @@ class Settings(BaseSettings):
     vision_max_hits: int = 12            # candidatos visuales aceptados como maximo
     vision_model: str = ""               # vacio = usa gemini_model
 
+    # --- Render del clip (vertical 9:16 con subtitulos quemados) ---
+    # Medido sobre los 30 clips mas vistos de auronplay e ibai: mediana de 26 s los dos.
+    # Los del canal pequeno que usa esto: mediana de 20 s. Ninguno pasa de 60 s (el tope
+    # que impone Twitch), y el 60% cae entre 16 y 30 s.
+    target_clip_s: float = 26.0
+    render_layout: str = "blur"        # blur | crop | split
+    render_font: str = "DejaVu Sans"
+    render_font_file: str = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
+    render_font_size: int = 82
+    render_outline: int = 7
+    render_shadow: int = 0
+    render_words_per_line: int = 3     # 2-3 palabras se leen de un vistazo en vertical
+    render_chars_per_line: int = 22
+    render_uppercase: bool = True
+    render_blur_sigma: int = 26
+    # Zoom del bloque de video en el layout blur. 1.0 no recorta nada; subirlo agranda la
+    # imagen a costa de los laterales, donde estos directos suelen tener la webcam.
+    render_zoom: float = 1.0
+    render_crf: int = 20
+    render_preset: str = "veryfast"
+    render_fps: int = 30
+    render_timeout_s: float = 900.0
+
     # --- Hype ---
     hype_emotes: str = Field(default=DEFAULT_HYPE_EMOTES)
     hype_keywords: str = Field(default=DEFAULT_HYPE_KEYWORDS)

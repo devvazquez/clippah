@@ -3,7 +3,9 @@
 import {
   ChevronDown,
   ChevronUp,
+  Download,
   Eye,
+  Loader2,
   MessageSquare,
   Play,
   Scissors,
@@ -28,27 +30,38 @@ export function MomentCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [rendering, setRendering] = useState(false);
+  const [ready, setReady] = useState(moment.has_clip);
   const tone = scoreTone(moment.final_score);
   const score = Math.round(moment.final_score * 100);
 
   async function generateClip() {
+    if (ready) {
+      window.open(api.clipUrl(moment.id), "_blank");
+      return;
+    }
     setRendering(true);
+    const toastId = toast.loading("Renderizando el clip vertical…", {
+      description: "Recorta el VOD, compone en 9:16 y quema los subtítulos.",
+    });
     try {
-      await api.render(moment.id);
-      // El backend devuelve 501: si llegamos aqui es que ya se implemento.
-      toast.success("Render lanzado");
+      const clip = await api.render(moment.id);
+      setReady(true);
+      toast.success(`Clip listo · ${clip.width}×${clip.height}`, {
+        id: toastId,
+        description: `${Math.round(clip.duration)} s · ${clip.captions} líneas de subtítulo · ${(
+          clip.size_bytes /
+          1024 /
+          1024
+        ).toFixed(1)} MB`,
+        action: {
+          label: "Descargar",
+          onClick: () => window.open(clip.download_url, "_blank"),
+        },
+      });
     } catch (err) {
-      if (err instanceof ApiError && err.status === 501) {
-        const detail = err.detail as { spec?: { t_start?: number; t_end?: number } } | null;
-        const spec = detail?.spec;
-        toast.info("Render no implementado todavía", {
-          description: spec
-            ? `RenderSpec listo: ${hhmmss(spec.t_start ?? 0)} → ${hhmmss(spec.t_end ?? 0)}`
-            : undefined,
-        });
-      } else {
-        toast.error(err instanceof ApiError ? err.message : "No se pudo generar el clip");
-      }
+      toast.error(err instanceof ApiError ? err.message : "No se pudo generar el clip", {
+        id: toastId,
+      });
     } finally {
       setRendering(false);
     }
@@ -160,8 +173,30 @@ export function MomentCard({
         <Button variant="subtle" size="sm" onClick={() => onPreview(moment)}>
           <Play className="h-3.5 w-3.5" /> Previsualizar
         </Button>
-        <Button variant="outline" size="sm" onClick={generateClip} disabled={rendering}>
-          <Scissors className="h-3.5 w-3.5" /> Generar clip
+        <Button
+          variant={ready ? "default" : "outline"}
+          size="sm"
+          onClick={generateClip}
+          disabled={rendering}
+          title={
+            ready
+              ? "Descargar el mp4 vertical con subtítulos"
+              : "Recorta el VOD, compone en 9:16 y quema los subtítulos"
+          }
+        >
+          {rendering ? (
+            <>
+              <Loader2 className="h-3.5 w-3.5 animate-spin" /> Renderizando
+            </>
+          ) : ready ? (
+            <>
+              <Download className="h-3.5 w-3.5" /> Descargar clip
+            </>
+          ) : (
+            <>
+              <Scissors className="h-3.5 w-3.5" /> Generar clip
+            </>
+          )}
         </Button>
       </div>
     </article>

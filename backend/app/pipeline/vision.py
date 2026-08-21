@@ -35,8 +35,15 @@ class SampledFrame:
     path: Path
 
 
-def frames_dir(video_id: str) -> Path:
-    d = settings.data_dir / "frames" / video_id
+def frames_dir(video_id: str, every_s: float) -> Path:
+    """El intervalo forma parte de la ruta.
+
+    El timestamp de cada fotograma se deduce de su indice multiplicado por el intervalo,
+    asi que una cache hecha cada 20 s reutilizada como si fuera de 10 s colocaria todos
+    los momentos al doble de su tiempo real. Separar por intervalo evita esa mezcla y
+    permite que convivan los dos muestreos.
+    """
+    d = settings.data_dir / "frames" / video_id / f"s{every_s:g}"
     d.mkdir(parents=True, exist_ok=True)
     return d
 
@@ -55,7 +62,7 @@ async def sample_frames(
     por seek remoto). Los fotogramas se cachean en disco, asi que reanalizar es gratis.
     """
     video_id = str(video["id"])
-    out_dir = frames_dir(video_id)
+    out_dir = frames_dir(video_id, every_s)
     existing = sorted(out_dir.glob("s_*.jpg"))
     if existing:
         log.info("muestreo visual ya en cache: %d fotogramas", len(existing))
@@ -137,7 +144,11 @@ class VisionProposer:
             await self.on_warning(message)
 
     async def propose(
-        self, frames: list[SampledFrame], *, progress: ProgressCb | None = None
+        self,
+        frames: list[SampledFrame],
+        *,
+        progress: ProgressCb | None = None,
+        max_hits: int | None = None,
     ) -> list[VisualHit]:
         """Devuelve los fotogramas notables, ordenados por confianza."""
         if not frames:
@@ -187,7 +198,7 @@ class VisionProposer:
                 and h.confidence >= settings.vision_min_confidence
             )
         hits.sort(key=lambda h: -h.confidence)
-        self.hits = hits[: settings.vision_max_hits]
+        self.hits = hits[: max_hits or settings.vision_max_hits]
         if progress:
             await progress(1.0, f"{len(self.hits)} momentos visuales")
         return self.hits

@@ -73,6 +73,8 @@ class MomentOut(BaseModel):
     vision_note: str = ""
     # Que engancha en los primeros 2 s. Si esta vacio, el clip arranca flojo.
     hook: str = ""
+    # true cuando el mp4 vertical ya esta renderizado en disco.
+    has_clip: bool = False
 
 
 class JobOut(BaseModel):
@@ -143,6 +145,20 @@ class HealthOut(BaseModel):
     scorer: str = "heuristic"
     vision: bool = False
     providers: list[ProviderHealth] = Field(default_factory=list)
+
+
+class ClipOut(BaseModel):
+    """Resultado del render de un momento."""
+
+    moment_id: str
+    width: int
+    height: int
+    duration: float
+    layout: str
+    captions: int
+    size_bytes: int
+    cached: bool
+    download_url: str
 
 
 class SfxCue(BaseModel):

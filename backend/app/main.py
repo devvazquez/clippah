@@ -20,6 +20,7 @@ from . import db
 from .config import settings
 from .events import hub
 from .models import (
+    ClipOut,
     HealthOut,
     JobCreate,
     JobCreated,
@@ -33,12 +34,12 @@ from .models import (
     VideoOut,
     Word,
 )
-from .pipeline import frames
+from .pipeline import frames, render
 from .pipeline.ingest import ProbeFailed, UnsupportedUrl, VodTooLong, probe, resolve_url
 from .pipeline.orchestrator import new_id, runner
 from .providers.gemini import GeminiScorer
 from .providers.groq import GroqTranscriber
-from .utils import have_faster_whisper, have_ffmpeg, have_ytdlp, log
+from .utils import CommandFailed, have_faster_whisper, have_ffmpeg, have_ytdlp, log
 
 SSE_HEARTBEAT_S = 15.0
 
@@ -115,6 +116,7 @@ def _moment_out(row: dict[str, Any]) -> MomentOut:
         source=row.get("source") or "signals",
         vision_note=str(row.get("vision_note") or ""),
         hook=str(row.get("hook") or ""),
+        has_clip=render.clip_path(str(row["id"])).exists(),
     )
 
 
@@ -383,10 +385,30 @@ def _build_render_spec(moment: dict[str, Any], video: dict[str, Any]) -> RenderS
     )
 
 
-@api.post("/moments/{moment_id}/render", status_code=501, response_model=RenderSpec)
-async def render_moment(moment_id: str) -> RenderSpec:
-    """STUB: el render del clip esta fuera de alcance. El `RenderSpec` si se construye,
-    porque es el contrato de la fase 2."""
+async def _clip_source(video: dict[str, Any]) -> str:
+    """Fichero local si lo hay; si no, la URL del stream (re-resolviendola si caduco)."""
+    local = video.get("video_path")
+    if local and Path(str(local)).exists():
+        return str(local)
+    url = str(video.get("stream_url") or "")
+    expires = float(video.get("stream_url_expires_at") or 0.0)
+    if not url or (expires and expires < time.time()):
+        url = await frames._refresh_stream_url(video)
+    if not url:
+        raise HTTPException(
+            status_code=503,
+            detail="No hay fuente de video para renderizar: no se pudo resolver el stream",
+        )
+    return url
+
+
+@api.post("/moments/{moment_id}/render", response_model=ClipOut)
+async def render_moment(
+    moment_id: str,
+    layout: str = Query("", description="blur | crop | split (vacio = el de config)"),
+    focus_x: float = Query(0.5, ge=0.0, le=1.0),
+) -> ClipOut:
+    """Renderiza el clip vertical 9:16 con subtitulos quemados."""
     row = await db.fetch_one("SELECT * FROM moments WHERE id=?", (moment_id,))
     if row is None:
         raise HTTPException(status_code=404, detail="Momento no encontrado")
@@ -395,10 +417,80 @@ async def render_moment(moment_id: str) -> RenderSpec:
         await db.fetch_one("SELECT * FROM videos WHERE id=?", (moment["video_id"],))
     )
     spec = _build_render_spec(moment, video)
-    raise HTTPException(
-        status_code=501,
-        detail={"message": "Render no implementado todavia", "spec": spec.model_dump()},
+
+    out = render.clip_path(moment_id)
+    cached = out.exists() and out.stat().st_size > 4096 and not layout
+    if not cached:
+        source = await _clip_source(video)
+        opts = render.RenderOptions(
+            layout=layout,
+            title=str(moment["title"]),
+            show_title=bool(moment["enriched"]),
+            focus_x=focus_x,
+            words=spec.captions,
+        )
+        try:
+            result = await render.render_clip(source, moment, opts, out=out)
+        except CommandFailed as exc:
+            log.exception("render de %s fallo", moment_id)
+            raise HTTPException(
+                status_code=500, detail=f"El render fallo: {exc}"
+            ) from exc
+        await db.execute(
+            "UPDATE moments SET clip_path=? WHERE id=?", (str(result.path), moment_id)
+        )
+        return ClipOut(
+            moment_id=moment_id, width=result.width, height=result.height,
+            duration=round(result.duration, 2), layout=result.layout,
+            captions=result.captions, size_bytes=result.size_bytes, cached=False,
+            download_url=f"/api/moments/{moment_id}/clip",
+        )
+
+    # `captions` son lineas de subtitulo, no palabras: se agrupan igual que al renderizar.
+    cues = render.group_words(
+        spec.captions, spec.t_start, spec.t_end,
+        max_words=settings.render_words_per_line,
+        max_chars=settings.render_chars_per_line,
     )
+    return ClipOut(
+        moment_id=moment_id, width=render.OUT_W, height=render.OUT_H,
+        duration=round(float(moment["t_end"]) - float(moment["t_start"]), 2),
+        layout=settings.render_layout, captions=len(cues),
+        size_bytes=out.stat().st_size, cached=True,
+        download_url=f"/api/moments/{moment_id}/clip",
+    )
+
+
+@api.get("/moments/{moment_id}/clip")
+async def moment_clip(moment_id: str) -> FileResponse:
+    """Descarga el mp4 renderizado."""
+    row = await db.fetch_one("SELECT id, title FROM moments WHERE id=?", (moment_id,))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Momento no encontrado")
+    path = render.clip_path(moment_id)
+    if not (path.exists() and path.stat().st_size > 4096):
+        raise HTTPException(
+            status_code=404,
+            detail="Este momento todavia no tiene clip: lanza el render primero",
+        )
+    safe = "".join(c if c.isalnum() or c in " -_" else "" for c in str(row["title"]))[:60]
+    return FileResponse(
+        path, media_type="video/mp4",
+        filename=f"{safe.strip() or moment_id}.mp4",
+    )
+
+
+@api.get("/moments/{moment_id}/spec", response_model=RenderSpec)
+async def moment_spec(moment_id: str) -> RenderSpec:
+    """El `RenderSpec` del momento: lo que consume el render."""
+    row = await db.fetch_one("SELECT * FROM moments WHERE id=?", (moment_id,))
+    if row is None:
+        raise HTTPException(status_code=404, detail="Momento no encontrado")
+    moment = db.row_to_dict(row)
+    video = db.row_to_dict(
+        await db.fetch_one("SELECT * FROM videos WHERE id=?", (moment["video_id"],))
+    )
+    return _build_render_spec(moment, video)
 
 
 @api.get("/health", response_model=HealthOut)

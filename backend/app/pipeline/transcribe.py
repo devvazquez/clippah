@@ -104,6 +104,17 @@ def refine_bounds(
 
     start = max(0.0, start)
     end = min(duration, max(end, start + min_len))
+
+    # Los clips que funcionan duran lo que duran: medido sobre los 30 mas vistos de
+    # auronplay e ibai, mediana de 26 s los dos, y el 60% entre 16 y 30 s. Si el corte
+    # refinado se pasa holgadamente del objetivo, se recorta por el final (el pico esta
+    # al principio de la ventana, no al final) en lugar de dejar 50 s que nadie termina.
+    target = clamp(settings.target_clip_s, min_len, max_len)
+    if end - start > target * 1.5:
+        trimmed = start + target
+        if trimmed > t_peak + 2.0:
+            end = min(end, trimmed)
+
     # Clamp de duracion, respetando siempre que el pico quede dentro.
     if end - start > max_len:
         end = start + max_len

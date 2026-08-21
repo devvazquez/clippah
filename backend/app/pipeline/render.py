@@ -1,0 +1,285 @@
+"""Render del clip: recorte vertical 9:16 con subtitulos quemados.
+
+Formato elegido a partir de lo que de verdad se publica. Medido sobre los 30 clips mas
+vistos de auronplay e ibai via el GQL de Twitch: mediana de 26 s los dos, con el 60% de
+los clips entre 16 y 30 s. Los del propio canal pequeno que usa esto: mediana de 20 s.
+De ahi TARGET_CLIP_S y el recorte al hueco 20-30 s.
+
+Del formato en si: 1080x1920, subtitulos grandes centrados y por encima del 20% inferior
+(donde las plataformas ponen su propia interfaz), y nada de perder contenido del
+fotograma original -- el layout por defecto rellena con una copia desenfocada en vez de
+recortar, porque en estos directos la webcam va compuesta dentro del 16:9 y un recorte
+central se la come.
+"""
+
+from __future__ import annotations
+
+import shutil
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+from typing import Any
+
+from ..config import settings
+from ..models import Word
+from ..utils import CommandFailed, clamp, ffmpeg_bin, log, run
+
+ProgressCb = Callable[[float, str], Awaitable[None]]
+
+OUT_W, OUT_H = 1080, 1920
+# Los subtitulos se colocan por encima de este margen inferior: ahi van el texto del
+# post, el @ del autor y los botones de la plataforma.
+SUB_MARGIN_V = 300
+# Un 16:9 a lo ancho de un 9:16 solo da 608 px de alto: queda un tercio de lienzo. El
+# bloque se centra ligeramente por encima del medio y el subtitulo se pega justo debajo,
+# para que la composicion se lea como intencionada y no como un video perdido en el
+# centro. Subir el zoom recorta los lados (ahi suele ir la webcam compuesta): por eso el
+# defecto es 1.0, sin perder nada.
+VIDEO_Y_FRACTION = 0.34
+
+_STYLE_FORMAT = (
+    "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, "
+    "BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, "
+    "BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding"
+)
+_EVENT_FORMAT = (
+    "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
+)
+ASS_HEADER = (
+    "[Script Info]\nScriptType: v4.00+\nPlayResX: {w}\nPlayResY: {h}\n"
+    "WrapStyle: 2\nScaledBorderAndShadow: yes\n\n"
+    "[V4+ Styles]\n" + _STYLE_FORMAT + "\n"
+    "Style: Caption,{font},{size},&H00FFFFFF,&H00FFFFFF,&H00101010,&H80000000,"
+    "-1,0,0,0,100,100,0,0,1,{outline},{shadow},2,60,60,{marginv},1\n\n"
+    "[Events]\n" + _EVENT_FORMAT + "\n"
+)
+
+
+@dataclass(slots=True)
+class RenderResult:
+    path: Path
+    width: int
+    height: int
+    duration: float
+    layout: str
+    captions: int
+    size_bytes: int = 0
+
+
+@dataclass(slots=True)
+class SubtitleCue:
+    start: float
+    end: float
+    text: str
+
+
+@dataclass(slots=True)
+class RenderOptions:
+    layout: str = ""              # blur | crop | split (vacio = el de config)
+    show_title: bool = False
+    title: str = ""
+    uppercase: bool | None = None
+    focus_x: float = 0.5          # centro del recorte en modo crop (0-1)
+    facecam: tuple[float, float, float, float] | None = None  # x,y,w,h en fraccion
+    words: list[Word] = field(default_factory=list)
+
+
+def _zoom_keep() -> float:
+    """Fraccion del ancho original que se conserva. 1.0 = no se recorta nada."""
+    return clamp(1.0 / max(1.0, settings.render_zoom), 0.5, 1.0)
+
+
+def clips_dir() -> Path:
+    d = settings.data_dir / "clips"
+    d.mkdir(parents=True, exist_ok=True)
+    return d
+
+
+def clip_path(moment_id: str) -> Path:
+    return clips_dir() / f"{moment_id}.mp4"
+
+
+def _ass_time(t: float) -> str:
+    t = max(0.0, t)
+    h = int(t // 3600)
+    m = int((t % 3600) // 60)
+    s = t % 60
+    return f"{h}:{m:02d}:{s:05.2f}"
+
+
+def _ass_escape(text: str) -> str:
+    return text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}").strip()
+
+
+def group_words(
+    words: list[Word], t_start: float, t_end: float, *, max_words: int, max_chars: int
+) -> list[SubtitleCue]:
+    """Agrupa las palabras en frases cortas, con tiempos relativos al inicio del clip.
+
+    Dos o tres palabras por linea es lo que se lee de un vistazo en vertical; una frase
+    entera obliga a parar el scroll para leer, que es justo lo contrario de lo que se
+    busca.
+    """
+    inside = [w for w in words if w.end > t_start and w.start < t_end and w.text.strip()]
+    cues: list[SubtitleCue] = []
+    chunk: list[Word] = []
+
+    def flush() -> None:
+        if not chunk:
+            return
+        text = " ".join(w.text.strip() for w in chunk).strip()
+        if not text:
+            chunk.clear()
+            return
+        start = max(0.0, chunk[0].start - t_start)
+        end = max(start + 0.35, min(t_end, chunk[-1].end) - t_start)
+        cues.append(SubtitleCue(start=start, end=end, text=text))
+        chunk.clear()
+
+    for w in inside:
+        prospective = " ".join([*(x.text.strip() for x in chunk), w.text.strip()])
+        gap = w.start - chunk[-1].end if chunk else 0.0
+        if chunk and (len(chunk) >= max_words or len(prospective) > max_chars or gap > 0.7):
+            flush()
+        chunk.append(w)
+    flush()
+
+    # Sin huecos raros: una linea se queda hasta que empieza la siguiente si el hueco es
+    # menor de 0,4 s (evita el parpadeo).
+    for a, b in zip(cues, cues[1:], strict=False):
+        if 0 < b.start - a.end < 0.4:
+            a.end = b.start
+    return cues
+
+
+def build_ass(cues: list[SubtitleCue], *, uppercase: bool) -> str:
+    head = ASS_HEADER.format(
+        w=OUT_W, h=OUT_H,
+        font=settings.render_font, size=settings.render_font_size,
+        outline=settings.render_outline, shadow=settings.render_shadow,
+        marginv=SUB_MARGIN_V,
+    )
+    lines = []
+    for c in cues:
+        text = _ass_escape(c.text)
+        if uppercase:
+            text = text.upper()
+        lines.append(
+            f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},Caption,,0,0,0,,{text}"
+        )
+    return head + "\n".join(lines) + "\n"
+
+
+def _layout_filters(layout: str, opts: RenderOptions) -> list[str]:
+    """Cadena de filtros que lleva el 16:9 de origen a 1080x1920."""
+    if layout == "crop":
+        # Recorte 9:16 del propio fotograma. Encuadra lo que interesa, pero se come lo
+        # que quede fuera (incluida la webcam si esta en una esquina).
+        fx = clamp(opts.focus_x, 0.0, 1.0)
+        return [
+            f"[0:v]crop=w=ih*9/16:h=ih:x='(iw-ih*9/16)*{fx:.3f}':y=0,"
+            f"scale={OUT_W}:{OUT_H}:flags=lanczos,setsar=1[comp]"
+        ]
+
+    if layout == "split" and opts.facecam:
+        # Webcam arriba, juego abajo: el layout clasico cuando la camara se puede aislar.
+        x, y, w, h = opts.facecam
+        cam_h = int(OUT_H * 0.38) // 2 * 2
+        game_h = OUT_H - cam_h
+        return [
+            "[0:v]split=2[cam][game]",
+            f"[cam]crop=w=iw*{w:.4f}:h=ih*{h:.4f}:x=iw*{x:.4f}:y=ih*{y:.4f},"
+            f"scale={OUT_W}:{cam_h}:flags=lanczos,setsar=1[camv]",
+            f"[game]crop=w=ih*9/16:h=ih:x='(iw-ih*9/16)*0.5':y=0,"
+            f"scale={OUT_W}:{game_h}:flags=lanczos,setsar=1[gamev]",
+            "[camv][gamev]vstack=inputs=2,setsar=1[comp]",
+        ]
+
+    # blur (por defecto): el 16:9 completo a lo ancho, sobre una copia ampliada y
+    # desenfocada de si mismo. No pierde nada del fotograma original.
+    return [
+        "[0:v]split=2[bg][fg]",
+        f"[bg]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,"
+        f"crop={OUT_W}:{OUT_H},gblur=sigma={settings.render_blur_sigma},"
+        f"eq=brightness=-0.06:saturation=0.85,setsar=1[bgv]",
+        f"[fg]crop=w=iw*{_zoom_keep():.4f}:h=ih:x='iw*(1-{_zoom_keep():.4f})/2':y=0,"
+        f"scale={OUT_W}:-2:flags=lanczos,setsar=1[fgv]",
+        f"[bgv][fgv]overlay=x=(W-w)/2:y=(H-h)*{VIDEO_Y_FRACTION}[comp]",
+    ]
+
+
+async def render_clip(
+    source: str,
+    moment: dict[str, Any],
+    opts: RenderOptions,
+    *,
+    out: Path | None = None,
+    progress: ProgressCb | None = None,
+) -> RenderResult:
+    """Renderiza el clip vertical. `source` es un fichero local o una URL de stream."""
+    t_start = float(moment["t_start"])
+    t_end = float(moment["t_end"])
+    duration = max(1.0, t_end - t_start)
+    out = out or clip_path(str(moment["id"]))
+    out.parent.mkdir(parents=True, exist_ok=True)
+
+    layout = (opts.layout or settings.render_layout).strip().lower()
+    uppercase = settings.render_uppercase if opts.uppercase is None else opts.uppercase
+
+    cues = group_words(
+        opts.words, t_start, t_end,
+        max_words=settings.render_words_per_line,
+        max_chars=settings.render_chars_per_line,
+    )
+    filters = _layout_filters(layout, opts)
+    last = "[comp]"
+
+    ass_path = out.with_suffix(".ass")
+    if cues:
+        ass_path.write_text(build_ass(cues, uppercase=uppercase), encoding="utf-8")
+        escaped = str(ass_path).replace("\\", "\\\\").replace(":", r"\:").replace("'", r"\'")
+        filters.append(f"{last}ass=filename='{escaped}'[subbed]")
+        last = "[subbed]"
+    else:
+        log.info("clip %s sin palabras alineadas: se renderiza sin subtitulos", moment["id"])
+
+    if opts.show_title and opts.title:
+        safe = (
+            opts.title.replace("\\", "").replace(":", "\\:").replace("'", "’")
+            .replace("%", "\\%")
+        )
+        filters.append(
+            f"{last}drawtext=text='{safe}':fontfile={settings.render_font_file}:"
+            f"fontsize=54:fontcolor=white:borderw=5:bordercolor=black@0.9:"
+            f"x=(w-text_w)/2:y=140:line_spacing=8[titled]"
+        )
+        last = "[titled]"
+
+    cmd = [
+        ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-ss", f"{t_start:.3f}", "-t", f"{duration:.3f}", "-i", source,
+        "-filter_complex", ";".join(filters),
+        "-map", last, "-map", "0:a?",
+        "-c:v", "libx264", "-preset", settings.render_preset, "-crf", str(settings.render_crf),
+        "-pix_fmt", "yuv420p", "-r", str(settings.render_fps),
+        "-c:a", "aac", "-b:a", "128k", "-ac", "2",
+        "-movflags", "+faststart",
+        str(out),
+    ]
+    if progress:
+        await progress(0.1, f"Renderizando {duration:.0f} s en vertical")
+    await run(cmd, timeout=settings.render_timeout_s)
+    ass_path.unlink(missing_ok=True)
+
+    if not out.exists() or out.stat().st_size < 4096:
+        raise CommandFailed(cmd, 0, "ffmpeg no produjo un mp4 valido")
+    if progress:
+        await progress(1.0, "Clip listo")
+    return RenderResult(
+        path=out, width=OUT_W, height=OUT_H, duration=duration, layout=layout,
+        captions=len(cues), size_bytes=out.stat().st_size,
+    )
+
+
+def have_render_deps() -> bool:
+    return shutil.which("ffmpeg") is not None
