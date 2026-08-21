@@ -42,5 +42,5 @@ ignore = [
 ]
 
 [tool.ruff.lint.per-file-ignores]
-"app/db.py" = ["E501"]           # el esquema SQL se lee mejor alineado
-"app/providers/gemini.py" = ["E501"]  # el prompt va literal, sin reflow
+"**/db.py" = ["E501"]                 # el esquema SQL se lee mejor alineado
+"**/providers/gemini.py" = ["E501"]   # el prompt va literal, sin reflow

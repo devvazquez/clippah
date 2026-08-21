@@ -26,6 +26,7 @@ class Candidate:
     audio_z: float
     unique_users: int
     msg_count: int
+    chat_ratio: float
     combo: bool
 
 
@@ -55,8 +56,8 @@ def _window_max(x: np.ndarray, win_bins: int) -> np.ndarray:
     return view.max(axis=1)[: x.size]
 
 
-def fuse(signals: SignalSet) -> tuple[np.ndarray, np.ndarray]:
-    """Devuelve (score por bin, mascara de combo por bin)."""
+def fuse(signals: SignalSet) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Devuelve (score por bin, mascara de combo, z de chat ya alineado)."""
     bs = signals.bin_seconds
     lag = settings.chat_lag_s
 
@@ -86,7 +87,7 @@ def fuse(signals: SignalSet) -> tuple[np.ndarray, np.ndarray]:
         # pico grande en una sola.
         score = np.where(combo, score * settings.combo_bonus, score)
 
-    return score, combo
+    return score, combo, z_chat
 
 
 def _edge_mask(signals: SignalSet) -> np.ndarray:
@@ -123,7 +124,7 @@ def pick_peaks(
 
 
 def select_candidates(signals: SignalSet, *, min_wanted: int = 5) -> list[Candidate]:
-    score, combo = fuse(signals)
+    score, combo, z_chat_aligned = fuse(signals)
     allowed = _edge_mask(signals)
     bs = signals.bin_seconds
     min_gap_bins = max(1, int(settings.min_gap_s / max(bs, 0.1)))
@@ -148,16 +149,25 @@ def select_candidates(signals: SignalSet, *, min_wanted: int = 5) -> list[Candid
             t_end = min(signals.duration, t_start + settings.min_clip_s)
         lo = signals.index_at(max(0.0, t_peak - settings.combo_window_s))
         hi = signals.index_at(min(signals.duration, t_peak + settings.combo_window_s)) + 1
+        msgs = float(signals.msg_count[lo:hi].sum()) if hi > lo else 0.0
+        base = (
+            float(signals.msg_baseline[lo:hi].sum())
+            if hi > lo and signals.msg_baseline.size
+            else 0.0
+        )
+        ratio = msgs / base if base >= 0.5 else 0.0
         out.append(
             Candidate(
                 t_peak=t_peak,
                 t_start=t_start,
                 t_end=t_end,
                 signal_score=float(score[idx]),
-                chat_z=float(signals.z_chat[idx]),
+                # El z de chat que se reporta es el alineado: es el que decidio el pico.
+                chat_z=float(z_chat_aligned[idx]),
                 audio_z=float(signals.z_audio[idx]),
                 unique_users=int(signals.unique_users[lo:hi].max() if hi > lo else 0),
-                msg_count=int(signals.msg_count[lo:hi].sum() if hi > lo else 0),
+                msg_count=int(msgs),
+                chat_ratio=round(ratio, 2),
                 combo=bool(combo[idx]),
             )
         )

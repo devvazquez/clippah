@@ -35,6 +35,7 @@ class Fragment:
     unique_users: int
     msg_count: int
     combo: bool
+    chat_ratio: float = 0.0
     transcript: str = ""
     language: str = ""
     words: list[dict[str, Any]] = field(default_factory=list)
@@ -82,11 +83,12 @@ def heuristic_scores(fragments: list[Fragment], *, chat_available: bool) -> list
         head = first_words(frag.transcript, 8)
         title = head or f"Momento a {hhmmss(frag.t_peak)}"
         if chat_available and frag.msg_count:
-            ratio = max(1.0, 1.0 + frag.chat_z)
-            description = (
-                f"Pico de actividad: {frag.msg_count} mensajes en 10 s, "
-                f"{ratio:.1f}x sobre lo normal."
-            )
+            window = int(2 * settings.combo_window_s)
+            description = f"Pico de actividad: {frag.msg_count} mensajes en {window} s"
+            if frag.chat_ratio >= 1.1:
+                description += f", {frag.chat_ratio:.1f}x el ritmo normal del chat."
+            else:
+                description += "."
         elif frag.audio_z:
             description = (
                 f"Pico de audio de +{frag.audio_z:.1f} sigma sobre el nivel habitual "
@@ -109,8 +111,13 @@ def heuristic_scores(fragments: list[Fragment], *, chat_available: bool) -> list
     return out
 
 
+# Sin LLM no hay ningun candidato que "valga 0": todos han superado el umbral de pico.
+# El percentil se mapea a [FLOOR, 1] para que el ultimo no salga con un score de 0/100.
+HEURISTIC_FLOOR = 0.3
+
+
 def _percentiles(values: list[float]) -> list[float]:
-    """Percentil (0-1) de cada valor dentro de la propia lista."""
+    """Percentil de cada valor dentro de la propia lista, mapeado a [HEURISTIC_FLOOR, 1]."""
     n = len(values)
     if n == 0:
         return []
@@ -119,7 +126,7 @@ def _percentiles(values: list[float]) -> list[float]:
     order = sorted(range(n), key=lambda i: values[i])
     pct = [0.0] * n
     for rank, idx in enumerate(order):
-        pct[idx] = rank / (n - 1)
+        pct[idx] = HEURISTIC_FLOOR + (1.0 - HEURISTIC_FLOOR) * (rank / (n - 1))
     return pct
 
 

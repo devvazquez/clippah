@@ -13,6 +13,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 import { JobProgress } from "@/components/JobProgress";
 import { MomentGrid } from "@/components/MomentGrid";
+import { Thumb } from "@/components/Thumb";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ApiError, type Job, type ProgressEvent, api } from "@/lib/api";
@@ -144,10 +145,7 @@ export function JobView({ jobId }: { jobId: string }) {
           <ArrowLeft className="h-4 w-4" />
         </Link>
         <div className="h-[68px] w-[120px] shrink-0 overflow-hidden rounded border border-line bg-surface-2">
-          {video?.thumbnail ? (
-            // eslint-disable-next-line @next/next/no-img-element
-            <img src={video.thumbnail} alt="" className="h-full w-full object-cover" />
-          ) : null}
+          <Thumb src={video?.thumbnail} />
         </div>
         <div className="min-w-0 flex-1">
           <h1 className="truncate text-[15px] font-semibold tracking-tight text-ink">

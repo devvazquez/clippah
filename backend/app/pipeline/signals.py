@@ -40,6 +40,9 @@ class SignalSet:
     audio_available: bool = False
     chat_available: bool = False
     valid_mask: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=bool))
+    # Mediana movil de mensajes/bin: el "ritmo normal" del chat en ese tramo. Sirve para
+    # dar un multiplicador honesto en la descripcion, en vez de reciclar el z-score.
+    msg_baseline: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=float))
 
     def bin_time(self, index: int) -> float:
         return (index + 0.5) * self.bin_seconds
@@ -251,8 +254,11 @@ def compute_signals(
     z_emote = zeros.copy()
     chat_available = False
 
+    msg_baseline = zeros.copy()
     if messages:
         msg_count, unique_users, emote_burst = chat_bins(messages, duration, bs)
+        win_bins = max(3, int(settings.baseline_window_s / max(bs, 0.1)))
+        msg_baseline, _ = rolling_median_mad(msg_count, win_bins)
         z_chat = zscore(
             msg_count, bin_seconds=bs, window_s=settings.baseline_window_s, floor=1.0
         )
@@ -279,4 +285,5 @@ def compute_signals(
         audio_available=audio_available,
         chat_available=chat_available,
         valid_mask=valid,
+        msg_baseline=msg_baseline,
     )

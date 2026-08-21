@@ -19,7 +19,7 @@ from typing import Any
 import httpx
 
 from ..config import settings
-from ..utils import CommandFailed, log, run, ytdlp_cmd
+from ..utils import CommandFailed, friendly_ytdlp_error, log, run, ytdlp_base
 
 ProgressCb = Callable[[float, str], Awaitable[None]]
 
@@ -278,19 +278,20 @@ async def fetch_youtube_chat(
     target = Path(str(base) + ".live_chat.json")
     if not target.exists():
         cmd = [
-            *ytdlp_cmd(),
+            *ytdlp_base(),
             "--skip-download",
             "--write-subs",
             "--sub-langs", "live_chat",
-            "--no-warnings",
-            "--no-playlist",
             "-o", str(base) + ".%(ext)s",
             url,
         ]
         try:
             await run(cmd, timeout=1800)
         except CommandFailed as exc:
-            raise ChatUnavailable(f"yt-dlp no pudo bajar el live chat: {exc}") from exc
+            hint = friendly_ytdlp_error(exc.stderr)
+            raise ChatUnavailable(
+                hint or f"yt-dlp no pudo bajar el live chat: {exc}"
+            ) from exc
     if not target.exists():
         cands = sorted(settings.media_dir.glob(f"{base.name}*live_chat*"))
         if not cands:

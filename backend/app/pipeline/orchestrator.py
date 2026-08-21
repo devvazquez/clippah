@@ -19,6 +19,7 @@ from . import frames
 from .candidates import Candidate, select_candidates
 from .chat import ChatMessage, ChatUnavailable, fetch_chat, fetch_twitch_chat_via_cli
 from .ingest import (
+    ProbeFailed,
     UnsupportedUrl,
     VideoInfo,
     VodTooLong,
@@ -199,29 +200,39 @@ async def run_pipeline(ctx: JobContext) -> int:
     await ctx.stage_progress("chat", 0.05, "Descargando el chat")
     messages: list[ChatMessage] = []
     chat_available = False
-    try:
-        messages = await fetch_chat(
-            info.platform, info.ext_id, info.url, info.duration,
-            progress=lambda pct, msg: ctx.stage_progress("chat", 0.05 + 0.9 * pct, msg),
-        )
-        chat_available = True
-    except ChatUnavailable as exc:
-        if info.platform == "twitch":
-            try:
-                messages = await fetch_twitch_chat_via_cli(info.ext_id)
-                chat_available = True
-            except ChatUnavailable as exc2:
-                log.info("fallback twitch-dl tampoco funciono: %s", exc2)
-        if not chat_available:
-            await ctx.warn(f"Chat no disponible: {exc} El analisis seguira solo con audio.")
-    except Exception as exc:  # noqa: BLE001 - el chat es opcional por diseno
-        await ctx.warn(f"Chat no disponible ({exc}). El analisis seguira solo con audio.")
 
-    if chat_available:
+    # Reanalizar el mismo VOD no debe volver a bajar 20.000 mensajes del GQL.
+    cached = await _load_chat(video_id)
+    if cached:
+        messages = cached
+        chat_available = True
+        pretty = f"{len(messages):,}".replace(",", ".")
+        await ctx.stage_progress("chat", 1.0, f"{pretty} mensajes (en cache)")
+
+    if not chat_available:
+        try:
+            messages = await fetch_chat(
+                info.platform, info.ext_id, info.url, info.duration,
+                progress=lambda pct, msg: ctx.stage_progress("chat", 0.05 + 0.9 * pct, msg),
+            )
+            chat_available = True
+        except ChatUnavailable as exc:
+            if info.platform == "twitch":
+                try:
+                    messages = await fetch_twitch_chat_via_cli(info.ext_id)
+                    chat_available = True
+                except ChatUnavailable as exc2:
+                    log.info("fallback twitch-dl tampoco funciono: %s", exc2)
+            if not chat_available:
+                await ctx.warn(f"Chat no disponible: {exc} El analisis seguira solo con audio.")
+        except Exception as exc:  # noqa: BLE001 - el chat es opcional por diseno
+            await ctx.warn(f"Chat no disponible ({exc}). El analisis seguira solo con audio.")
+
+    if chat_available and not cached:
         await _store_chat(video_id, messages)
         pretty = f"{len(messages):,}".replace(",", ".")
         await ctx.stage_progress("chat", 1.0, f"{pretty} mensajes")
-    else:
+    elif not chat_available:
         await ctx.stage_progress("chat", 1.0, "Sin chat: solo audio")
     await db.execute(
         "UPDATE jobs SET chat_available=?, chat_messages=?, updated_at=? WHERE id=?",
@@ -286,6 +297,7 @@ async def run_pipeline(ctx: JobContext) -> int:
                     unique_users=cand.unique_users,
                     msg_count=cand.msg_count,
                     combo=cand.combo,
+                    chat_ratio=cand.chat_ratio,
                     transcript=text,
                     language=transcript.language,
                     words=words,
@@ -456,7 +468,7 @@ class JobRunner:
             )
             await hub.publish(job_id, {"stage": "cancelled", "message": "Job cancelado"})
             raise
-        except (UnsupportedUrl, VodTooLong) as exc:
+        except (UnsupportedUrl, VodTooLong, ProbeFailed) as exc:
             await self._fail(job_id, str(exc))
         except Exception as exc:  # noqa: BLE001 - cualquier fallo se reporta al cliente
             log.exception("job %s fallo", job_id)

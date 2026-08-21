@@ -49,7 +49,14 @@ ninguna clave la app funciona igual, solo más lenta y con títulos menos ricos.
 
 ### Capturas
 
+Pantalla de entrada: input con validación, historial y estado de proveedores.
+
 ![Pantalla de entrada](docs/screenshot-home.png)
+
+Resultados: parrilla de momentos con fotograma real del VOD, timestamp, score, categoría
+y señales. Las capturas están tomadas en modo local (sin API keys), por eso los títulos
+salen del transcript y llevan el badge «Sin IA»; las miniaturas del VOD aparecen con el
+icono de placeholder porque la CDN de Twitch no era accesible desde donde se capturó.
 
 ![Parrilla de momentos](docs/screenshot-job.png)
 
@@ -200,6 +207,7 @@ Todo en `backend/.env` (ver `backend/.env.example`). Lo más útil:
 | `MAX_CANDIDATES` / `TOP_N` | `30` / `12` | Candidatos analizados / momentos mostrados |
 | `MIN_CLIP_S` / `MAX_CLIP_S` | `12` / `60` | Duración del clip tras refinar bordes |
 | `WHISPER_MODEL` | `large-v3-turbo` | `small` o `medium` para máquinas modestas |
+| `YTDLP_COOKIES_FROM_BROWSER` | — | `firefox`/`chrome`/… si YouTube pide verificación anti-bot |
 | `KEEP_MEDIA` | `0` | `1` conserva el WAV al terminar (útil para reanalizar) |
 | `EDGE_TRIM_S` | `60` | Segundos descartados al principio y al final |
 | `GROQ_ASD` | `28800` | Segundos de audio/día de Groq. Bájalo para probar la degradación |

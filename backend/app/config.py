@@ -81,6 +81,13 @@ class Settings(BaseSettings):
     data_dir: Path = Path("./data")
     keep_media: bool = False
 
+    # --- yt-dlp ---
+    # YouTube pide verificacion anti-bot desde IPs de datacenter (y a veces desde
+    # conexiones domesticas). Pasar cookies del navegador lo resuelve.
+    ytdlp_cookies_from_browser: str = ""   # p.ej. "firefox", "chrome", "brave:Default"
+    ytdlp_cookies_file: str = ""           # ruta a un cookies.txt en formato Netscape
+    ytdlp_extra_args: str = ""             # argumentos extra, tal cual
+
     # --- Servidor ---
     cors_origins: str = "http://localhost:3000,http://127.0.0.1:3000"
     max_concurrent_jobs: int = 1

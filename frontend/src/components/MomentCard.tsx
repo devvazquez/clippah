@@ -12,6 +12,7 @@ import {
 } from "lucide-react";
 import { useState } from "react";
 import { toast } from "sonner";
+import { Thumb } from "@/components/Thumb";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ApiError, CATEGORY_LABELS, type Moment, api } from "@/lib/api";
@@ -26,7 +27,6 @@ export function MomentCard({
 }) {
   const [expanded, setExpanded] = useState(false);
   const [rendering, setRendering] = useState(false);
-  const [imgFailed, setImgFailed] = useState(false);
   const tone = scoreTone(moment.final_score);
   const score = Math.round(moment.final_score * 100);
 
@@ -56,20 +56,7 @@ export function MomentCard({
   return (
     <article className="card group flex flex-col overflow-hidden transition-colors hover:border-line/80">
       <div className="relative aspect-video w-full overflow-hidden bg-surface-2">
-        {!imgFailed ? (
-          // eslint-disable-next-line @next/next/no-img-element
-          <img
-            src={moment.thumbnail_url}
-            alt=""
-            loading="lazy"
-            onError={() => setImgFailed(true)}
-            className="h-full w-full object-cover"
-          />
-        ) : (
-          <div className="flex h-full w-full items-center justify-center text-[11px] text-ink-faint">
-            sin fotograma
-          </div>
-        )}
+        <Thumb src={moment.thumbnail_url} iconClassName="h-5 w-5" />
         <button
           onClick={() => onPreview(moment)}
           className="absolute inset-0 flex items-center justify-center bg-black/0 opacity-0 transition-all group-hover:bg-black/40 group-hover:opacity-100"

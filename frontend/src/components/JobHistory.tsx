@@ -3,6 +3,7 @@
 import { Clock, Film } from "lucide-react";
 import Link from "next/link";
 import { useEffect, useState } from "react";
+import { Thumb } from "@/components/Thumb";
 import { Badge } from "@/components/ui/badge";
 import { Skeleton } from "@/components/ui/skeleton";
 import { type JobListItem, api } from "@/lib/api";
@@ -70,15 +71,7 @@ export function JobHistory() {
             className="flex items-center gap-3 bg-surface px-3 py-2.5 transition-colors hover:bg-surface-2"
           >
             <div className="h-10 w-[70px] shrink-0 overflow-hidden rounded bg-surface-2">
-              {job.thumbnail ? (
-                // eslint-disable-next-line @next/next/no-img-element
-                <img
-                  src={job.thumbnail}
-                  alt=""
-                  className="h-full w-full object-cover"
-                  loading="lazy"
-                />
-              ) : null}
+              <Thumb src={job.thumbnail} />
             </div>
             <div className="min-w-0 flex-1">
               <p className="truncate text-[13px] font-medium text-ink">

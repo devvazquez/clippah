@@ -10,7 +10,16 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ..config import settings
-from ..utils import CommandFailed, ffmpeg_bin, log, run, run_streaming, ytdlp_cmd
+from ..utils import (
+    CommandFailed,
+    ffmpeg_bin,
+    friendly_ytdlp_error,
+    log,
+    run,
+    run_streaming,
+    ytdlp_base,
+    ytdlp_error_line,
+)
 
 ProgressCb = Callable[[float, str], Awaitable[None]]
 
@@ -31,6 +40,10 @@ YOUTUBE_PATTERNS = (
 
 class UnsupportedUrl(ValueError):
     pass
+
+
+class ProbeFailed(RuntimeError):
+    """yt-dlp no pudo leer el enlace; el mensaje ya es apto para mostrar al usuario."""
 
 
 class VodTooLong(ValueError):
@@ -82,8 +95,14 @@ def resolve_url(raw_url: str) -> ResolvedUrl:
 
 async def probe(resolved: ResolvedUrl) -> VideoInfo:
     """`yt-dlp -J` para obtener metadata sin descargar nada."""
-    cmd = [*ytdlp_cmd(), "-J", "--no-warnings", "--no-playlist", resolved.url]
-    res = await run(cmd, timeout=180)
+    cmd = [*ytdlp_base(), "-J", resolved.url]
+    try:
+        res = await run(cmd, timeout=180)
+    except CommandFailed as exc:
+        hint = friendly_ytdlp_error(exc.stderr)
+        raise ProbeFailed(
+            hint or f"No se pudo leer el enlace: {ytdlp_error_line(exc.stderr)}"
+        ) from exc
     try:
         data = json.loads(res.stdout)
     except json.JSONDecodeError as exc:
@@ -118,6 +137,18 @@ async def probe(resolved: ResolvedUrl) -> VideoInfo:
 _PCT = re.compile(r"\[download\]\s+(\d+(?:\.\d+)?)%")
 
 
+async def _stream_or_explain(cmd: list[str]):
+    """`run_streaming` traduciendo los fallos conocidos de yt-dlp a algo accionable."""
+    try:
+        async for line in run_streaming(cmd, timeout=None):
+            yield line
+    except CommandFailed as exc:
+        hint = friendly_ytdlp_error(exc.stderr)
+        if hint:
+            raise ProbeFailed(hint) from exc
+        raise
+
+
 async def download_audio(
     info: VideoInfo, *, progress: ProgressCb | None = None
 ) -> Path:
@@ -132,20 +163,18 @@ async def download_audio(
         return wav
 
     cmd = [
-        *ytdlp_cmd(),
+        *ytdlp_base(),
         "-f", "bestaudio/best",
         "-x",
         "--audio-format", "wav",
         "--postprocessor-args", "ffmpeg:-ar 16000 -ac 1",
-        "--no-playlist",
-        "--no-warnings",
         "--newline",
         "--no-part",
         "-o", str(out_base) + ".%(ext)s",
         info.url,
     ]
     last = -1.0
-    async for line in run_streaming(cmd, timeout=None):
+    async for line in _stream_or_explain(cmd):
         m = _PCT.search(line)
         if m and progress:
             pct = float(m.group(1)) / 100.0
@@ -189,7 +218,7 @@ async def resolve_stream_url(info: VideoInfo, *, max_height: int = 720) -> tuple
         "best",
     ]
     for fmt in fmts:
-        cmd = [*ytdlp_cmd(), "-g", "-f", fmt, "--no-warnings", "--no-playlist", info.url]
+        cmd = [*ytdlp_base(), "-g", "-f", fmt, info.url]
         try:
             res = await run(cmd, timeout=180)
         except CommandFailed as exc:
@@ -211,14 +240,14 @@ async def download_video(info: VideoInfo, *, progress: ProgressCb | None = None)
             return cand
 
     cmd = [
-        *ytdlp_cmd(),
+        *ytdlp_base(),
         "-f", "best[height<=480][ext=mp4]/best[height<=480]/best",
-        "--no-playlist", "--no-warnings", "--newline", "--no-part",
+        "--newline", "--no-part",
         "-o", str(out_base) + ".%(ext)s",
         info.url,
     ]
     last = -1.0
-    async for line in run_streaming(cmd, timeout=None):
+    async for line in _stream_or_explain(cmd):
         m = _PCT.search(line)
         if m and progress:
             pct = float(m.group(1)) / 100.0

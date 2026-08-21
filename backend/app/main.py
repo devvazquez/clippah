@@ -34,7 +34,7 @@ from .models import (
     Word,
 )
 from .pipeline import frames
-from .pipeline.ingest import UnsupportedUrl, VodTooLong, probe, resolve_url
+from .pipeline.ingest import ProbeFailed, UnsupportedUrl, VodTooLong, probe, resolve_url
 from .pipeline.orchestrator import new_id, runner
 from .providers.gemini import GeminiScorer
 from .providers.groq import GroqTranscriber
@@ -155,7 +155,7 @@ async def create_job(payload: JobCreate) -> JobCreated:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     try:
         info = await probe(resolved)
-    except VodTooLong as exc:
+    except (VodTooLong, ProbeFailed) as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     except Exception as exc:  # noqa: BLE001 - yt-dlp puede fallar por mil motivos
         raise HTTPException(

@@ -37,10 +37,16 @@ dev: ## Levanta backend (:8000) y frontend (:3000) con un solo comando
 	@$(MAKE) --no-print-directory doctor
 	@echo "backend  -> http://127.0.0.1:$(BACKEND_PORT)"
 	@echo "frontend -> http://localhost:$(FRONTEND_PORT)"
-	@trap 'kill 0' EXIT INT TERM; \
-	 ( cd backend && ../$(PYBIN)/python -m uvicorn app.main:app --reload --port $(BACKEND_PORT) ) & \
-	 ( cd frontend && npm run dev -- --port $(FRONTEND_PORT) ) & \
-	 wait
+	@echo "Ctrl+C para parar los dos"
+	@# Ctrl+C ya llega a los dos hijos por el grupo de procesos: este shell lo ignora y
+	@# solo espera. Reenviarselo otra vez hace que uvicorn --reload muera con segfault.
+	@back=; front=; \
+	 trap 'kill $$back $$front 2>/dev/null' EXIT TERM; \
+	 trap "" INT; \
+	 ( cd backend && ../$(PYBIN)/python -m uvicorn app.main:app --reload --port $(BACKEND_PORT) ) & back=$$!; \
+	 ( cd frontend && npm run dev -- --port $(FRONTEND_PORT) ) & front=$$!; \
+	 wait $$back $$front; code=$$?; \
+	 if [ $$code -eq 130 ] || [ $$code -eq 2 ]; then exit 0; fi; exit $$code
 
 backend: ## Solo el backend
 	cd backend && ../$(PYBIN)/python -m uvicorn app.main:app --reload --port $(BACKEND_PORT)
@@ -50,14 +56,14 @@ frontend: ## Solo el frontend
 
 check: lint typecheck ## ruff check + tsc --noEmit
 
-lint: ## ruff check del backend
-	cd backend && ../$(PYBIN)/ruff check .
+lint: ## ruff check del backend y de scripts/
+	$(PYBIN)/ruff check --config backend/pyproject.toml backend scripts
 
 typecheck: ## tsc --noEmit del frontend
 	cd frontend && npx tsc --noEmit
 
 fmt: ## ruff format + fix
-	cd backend && ../$(PYBIN)/ruff check --fix . && ../$(PYBIN)/ruff format .
+	$(PYBIN)/ruff check --config backend/pyproject.toml --fix backend scripts
 
 doctor: ## Comprueba que ffmpeg/ffprobe y el venv estan disponibles
 	@command -v ffmpeg  >/dev/null || { echo "FALTA ffmpeg (apt install ffmpeg / brew install ffmpeg)"; exit 1; }

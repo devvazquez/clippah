@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import shlex
 import shutil
 import sys
 from collections.abc import AsyncIterator, Sequence
@@ -52,6 +53,61 @@ def ytdlp_cmd() -> list[str]:
     if path:
         return [path]
     return [sys.executable, "-m", "yt_dlp"]
+
+
+def ytdlp_base(*, playlist: bool = False) -> list[str]:
+    """Comando de yt-dlp con las opciones globales (cookies, extras) ya aplicadas."""
+    from .config import settings
+
+    cmd = [*ytdlp_cmd(), "--no-warnings"]
+    if not playlist:
+        cmd.append("--no-playlist")
+    if settings.ytdlp_cookies_from_browser:
+        cmd += ["--cookies-from-browser", settings.ytdlp_cookies_from_browser]
+    if settings.ytdlp_cookies_file:
+        cmd += ["--cookies", settings.ytdlp_cookies_file]
+    if settings.ytdlp_extra_args:
+        cmd += shlex.split(settings.ytdlp_extra_args)
+    return cmd
+
+
+# Mensajes de yt-dlp que conviene traducir a algo accionable para el usuario.
+_YTDLP_HINTS: tuple[tuple[str, str], ...] = (
+    (
+        "sign in to confirm",
+        "YouTube esta pidiendo verificacion anti-bot para esta IP. Pon "
+        "YTDLP_COOKIES_FROM_BROWSER=firefox (o chrome/brave) en backend/.env, o "
+        "YTDLP_COOKIES_FILE=/ruta/cookies.txt.",
+    ),
+    (
+        "does not exist",
+        "Ese VOD no existe o ya no esta disponible. Los VODs de cuentas normales de "
+        "Twitch caducan a los 60 dias.",
+    ),
+    ("private video", "El video es privado."),
+    ("members-only", "El video es solo para miembros del canal."),
+    (
+        "unable to download webpage",
+        "No se pudo alcanzar la plataforma. Revisa la conexion o el proxy.",
+    ),
+)
+
+
+def friendly_ytdlp_error(stderr: str) -> str | None:
+    """Devuelve un mensaje accionable si el error de yt-dlp es uno de los conocidos."""
+    low = (stderr or "").lower()
+    for needle, hint in _YTDLP_HINTS:
+        if needle in low:
+            return hint
+    return None
+
+
+def ytdlp_error_line(stderr: str) -> str:
+    """Ultima linea `ERROR:` de yt-dlp, sin la ruta del interprete ni el resto del ruido."""
+    lines = [ln.strip() for ln in (stderr or "").splitlines() if ln.strip()]
+    errors = [ln for ln in lines if ln.upper().startswith("ERROR")]
+    raw = (errors[-1] if errors else (lines[-1] if lines else "")).removeprefix("ERROR:").strip()
+    return raw[:300] or "yt-dlp no dio detalles"
 
 
 def have_ffmpeg() -> bool:

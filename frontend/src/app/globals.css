@@ -4,6 +4,12 @@
 
 :root {
   color-scheme: dark;
+  /* Stack del sistema: compacto, sin descargar fuentes (la app tiene que funcionar
+     offline y sin depender de Google Fonts). */
+  --font-ui: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", "Noto Sans", Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
 }
 
 @layer base {
@@ -14,7 +20,7 @@
     @apply bg-base;
   }
   body {
-    @apply bg-base text-ink antialiased;
+    @apply bg-base font-sans text-ink antialiased;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
   }
   /* Numeros tabulares para timestamps y scores: no deben bailar al actualizarse. */

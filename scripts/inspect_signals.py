@@ -56,13 +56,13 @@ async def main() -> int:
         f"bins={signals.n_bins} audio={signals.audio_available} chat={signals.chat_available}"
     )
 
-    score, combo = fuse(signals)
+    score, combo, z_chat_aligned = fuse(signals)
     order = sorted(range(signals.n_bins), key=lambda i: -score[i])[: args.top]
     print(f"\nTop {args.top} picos de score fusionado:")
     for i in order:
         print(
             f"  {hhmmss(signals.bin_time(i)):>9}  score={score[i]:6.2f} "
-            f"z_audio={signals.z_audio[i]:5.2f} z_chat={signals.z_chat[i]:5.2f} "
+            f"z_audio={signals.z_audio[i]:5.2f} z_chat={z_chat_aligned[i]:5.2f} "
             f"msgs={int(signals.msg_count[i]):3d} combo={'si' if combo[i] else 'no'}"
         )
 
