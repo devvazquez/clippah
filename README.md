@@ -204,13 +204,33 @@ Todo en `backend/.env` (ver `backend/.env.example`). Lo más útil:
 | `W_CHAT` / `W_USERS` / `W_EMOTE` / `W_AUDIO` | `1.0` / `1.2` / `1.5` / `0.8` | Pesos de la fusión. Sin chat, `W_AUDIO=1` y el resto a 0 |
 | `PEAK_PERCENTILE` | `97` | Umbral de picos. Se relaja solo si salen menos de 5 |
 | `MIN_GAP_S` | `45` | Separación mínima entre picos (NMS) |
-| `MAX_CANDIDATES` / `TOP_N` | `30` / `12` | Candidatos analizados / momentos mostrados |
+| `MAX_CANDIDATES` / `TOP_N` | `30` / `12` | Candidatos analizados / momentos mostrados. **Es el que manda en el tiempo total** si transcribes en local: ver abajo |
 | `MIN_CLIP_S` / `MAX_CLIP_S` | `12` / `60` | Duración del clip tras refinar bordes |
 | `WHISPER_MODEL` | `large-v3-turbo` | `small` o `medium` para máquinas modestas |
 | `YTDLP_COOKIES_FROM_BROWSER` | — | `firefox`/`chrome`/… si YouTube pide verificación anti-bot |
 | `KEEP_MEDIA` | `0` | `1` conserva el WAV al terminar (útil para reanalizar) |
 | `EDGE_TRIM_S` | `60` | Segundos descartados al principio y al final |
 | `GROQ_ASD` | `28800` | Segundos de audio/día de Groq. Bájalo para probar la degradación |
+
+### Cuánto tarda
+
+Con Groq la transcripción es cuestión de segundos. En local depende de **cuánta voz**
+hay en las ventanas, no de su duración: el filtro VAD descarta el silencio antes de
+decodificar. Medido en una máquina de 4 núcleos con `WHISPER_MODEL=small`:
+
+| Tipo de directo | Voz por ventana de 53 s | Por candidato |
+|---|---|---|
+| Gameplay con música y pausas | 9-15 s | ~3 s |
+| Directo hablado / charla | 33-39 s | ~95 s |
+
+Es decir, en un directo muy hablado los 30 candidatos por defecto pueden ser **45
+minutos** de transcripción local. Si te importa el tiempo: baja `MAX_CANDIDATES` a
+`TOP_N` (transcribir 30 para mostrar 12 solo tiene sentido cuando el LLM filtra falsas
+alarmas), usa `WHISPER_MODEL=small`, o pon una `GROQ_API_KEY`.
+
+La descarga del audio es el otro tramo lento: unos 8 minutos por cada 30 min de VOD, y
+se cachea, así que reanalizar el mismo VOD con otros parámetros ya no la repite (con
+`KEEP_MEDIA=1`).
 
 ---
 

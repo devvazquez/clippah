@@ -14,6 +14,8 @@ from .signals import SignalSet
 HOT_Z = 2.0
 # Escalones de percentil a los que bajamos si el umbral estricto deja muy pocos picos.
 PERCENTILE_FALLBACKS = (92.0, 85.0, 70.0, 50.0)
+# Dos scores se consideran empatados por debajo de esta diferencia relativa.
+TIE_TOL = 1e-9
 
 
 @dataclass(slots=True)
@@ -123,6 +125,37 @@ def pick_peaks(
     return chosen
 
 
+def trim_to_limit(peaks: list[int], score: np.ndarray, limit: int) -> list[int]:
+    """Recorta a `limit` picos conservando los de mayor score.
+
+    Con chat escaso el z-score se satura y decenas de picos empatan con el mismo valor.
+    Cortar entonces por orden de score deja los `limit` primeros *cronologicamente* y
+    descarta en silencio la ultima parte del VOD. Cuando un grupo de empatados no cabe
+    entero, se muestrea repartido a lo largo del VOD en vez de por el principio.
+    """
+    if len(peaks) <= limit:
+        return peaks
+    ordered = sorted(peaks, key=lambda p: -float(score[p]))
+    kept: list[int] = []
+    i = 0
+    while i < len(ordered) and len(kept) < limit:
+        ref = float(score[ordered[i]])
+        j = i
+        while j < len(ordered) and abs(float(score[ordered[j]]) - ref) <= TIE_TOL * max(
+            1.0, abs(ref)
+        ):
+            j += 1
+        group = sorted(ordered[i:j])  # empatados, en orden temporal
+        room = limit - len(kept)
+        if len(group) <= room:
+            kept.extend(group)
+        else:
+            picks = np.linspace(0, len(group) - 1, room)
+            kept.extend(group[int(round(k))] for k in picks)
+        i = j
+    return kept[:limit]
+
+
 def select_candidates(signals: SignalSet, *, min_wanted: int = 5) -> list[Candidate]:
     score, combo, z_chat_aligned = fuse(signals)
     allowed = _edge_mask(signals)
@@ -138,7 +171,7 @@ def select_candidates(signals: SignalSet, *, min_wanted: int = 5) -> list[Candid
                 log.info("umbral de picos relajado al percentil %.0f", pct)
             break
 
-    peaks = peaks[: settings.max_candidates]
+    peaks = trim_to_limit(peaks, score, settings.max_candidates)
     out: list[Candidate] = []
     for idx in peaks:
         t_peak = signals.bin_time(idx)
