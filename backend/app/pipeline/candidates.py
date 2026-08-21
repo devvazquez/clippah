@@ -63,12 +63,16 @@ def fuse(signals: SignalSet) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     bs = signals.bin_seconds
     lag = settings.chat_lag_s
 
-    if signals.chat_available:
+    # Un chat demasiado escaso se trata como si no hubiera chat: su z-score esta
+    # saturado y con sus pesos taparia al audio sin aportar nada. Salvo que no haya
+    # audio, en cuyo caso es lo unico que tenemos y lo usamos igualmente.
+    use_chat = signals.chat_available and (signals.chat_usable or not signals.audio_available)
+    if use_chat:
         w_chat, w_users, w_emote, w_audio = (
             settings.w_chat, settings.w_users, settings.w_emote, settings.w_audio
         )
     else:
-        # Sin chat, el audio es la unica senal: se lleva todo el peso.
+        # Sin chat util, el audio es la unica senal: se lleva todo el peso.
         w_chat = w_users = w_emote = 0.0
         w_audio = 1.0
 
@@ -80,7 +84,7 @@ def fuse(signals: SignalSet) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
     score = w_chat * z_chat + w_users * z_users + w_emote * z_emote + w_audio * z_audio
 
     combo = np.zeros(signals.n_bins, dtype=bool)
-    if signals.chat_available and signals.audio_available:
+    if use_chat and signals.audio_available:
         win_bins = max(1, int(settings.combo_window_s / max(bs, 0.1)))
         chat_hot = _window_max(z_chat, win_bins) >= HOT_Z
         audio_hot = _window_max(z_audio, win_bins) >= HOT_Z

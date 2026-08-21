@@ -244,8 +244,8 @@ async def run_pipeline(ctx: JobContext) -> int:
         if rate < settings.min_chat_rate_per_min or users < 3:
             await ctx.warn(
                 f"El chat es muy escaso ({len(messages)} mensajes de {users} "
-                f"{'usuario' if users == 1 else 'usuarios'}, {rate:.1f}/min): aporta poco "
-                f"como senal y el analisis se guiara sobre todo por el audio."
+                f"{'usuario' if users == 1 else 'usuarios'}, {rate:.1f}/min): no da para "
+                f"senal, el analisis se guia solo por el audio."
             )
 
     # ---------------------------------------------------------------- 3. senales

@@ -39,6 +39,13 @@ class SignalSet:
     z_emote: np.ndarray
     audio_available: bool = False
     chat_available: bool = False
+    # Hay chat, pero ¿sirve como senal? Un chat de 0,5 mensajes/min de un solo usuario
+    # satura el z-score en el suelo: todos los bins con mensaje valen igual y, con los
+    # pesos por defecto (1.0+1.2+1.5 frente a 0.8 del audio), acaba mandando sobre el
+    # audio sin aportar informacion.
+    chat_usable: bool = False
+    chat_rate_per_min: float = 0.0
+    chat_users: int = 0
     valid_mask: np.ndarray = field(default_factory=lambda: np.zeros(0, dtype=bool))
     # Mediana movil de mensajes/bin: el "ritmo normal" del chat en ese tramo. Sirve para
     # dar un multiplicador honesto en la descripcion, en vez de reciclar el z-score.
@@ -255,8 +262,16 @@ def compute_signals(
     chat_available = False
 
     msg_baseline = zeros.copy()
+    chat_usable = False
+    chat_rate = 0.0
+    chat_users = 0
     if messages:
         msg_count, unique_users, emote_burst = chat_bins(messages, duration, bs)
+        chat_users = len({m.user.lower() for m in messages})
+        chat_rate = len(messages) / max(duration / 60.0, 1e-6)
+        chat_usable = (
+            chat_rate >= settings.min_chat_rate_per_min and chat_users >= 3
+        )
         win_bins = max(3, int(settings.baseline_window_s / max(bs, 0.1)))
         msg_baseline, _ = rolling_median_mad(msg_count, win_bins)
         z_chat = zscore(
@@ -284,6 +299,9 @@ def compute_signals(
         z_emote=z_emote,
         audio_available=audio_available,
         chat_available=chat_available,
+        chat_usable=chat_usable,
+        chat_rate_per_min=chat_rate,
+        chat_users=chat_users,
         valid_mask=valid,
         msg_baseline=msg_baseline,
     )
