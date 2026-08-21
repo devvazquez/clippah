@@ -170,6 +170,45 @@ def build_ass(cues: list[SubtitleCue], *, uppercase: bool) -> str:
     return head + "\n".join(lines) + "\n"
 
 
+# Ancho de avance medio de DejaVu Sans Bold, en fracciones del tamano de fuente. Sirve
+# para estimar si el titulo cabe: `drawtext` no ajusta ni parte lineas por su cuenta, y
+# un titulo largo se sale del lienzo por los dos lados sin avisar.
+_AVG_ADVANCE = 0.62
+_TITLE_MAX_W = OUT_W - 120
+
+
+def _fit_title(title: str, *, base_size: int = 54) -> tuple[str, int]:
+    """Parte el titulo en como maximo dos lineas y reduce el cuerpo hasta que quepa."""
+    words = title.split()
+    size = base_size
+    lines: list[str] = []
+    for _ in range(6):
+        max_chars = max(8, int(_TITLE_MAX_W / (size * _AVG_ADVANCE)))
+        lines, current = [], ""
+        for w in words:
+            candidate = f"{current} {w}".strip()
+            if len(candidate) <= max_chars or not current:
+                current = candidate
+            else:
+                lines.append(current)
+                current = w
+        if current:
+            lines.append(current)
+        if len(lines) <= 2 and all(len(ln) <= max_chars for ln in lines):
+            break
+        size -= 6
+        if size <= 30:
+            break
+    if len(lines) > 2:
+        lines = [*lines[:2]]
+        lines[1] = lines[1][:-1] + "…"
+    escaped = [
+        ln.replace("\\", "").replace(":", r"\:").replace("'", "’").replace("%", r"\%")
+        for ln in lines
+    ]
+    return "\n".join(escaped), size
+
+
 def _layout_filters(layout: str, opts: RenderOptions) -> list[str]:
     """Cadena de filtros que lleva el 16:9 de origen a 1080x1920."""
     if layout == "crop":
@@ -244,14 +283,11 @@ async def render_clip(
         log.info("clip %s sin palabras alineadas: se renderiza sin subtitulos", moment["id"])
 
     if opts.show_title and opts.title:
-        safe = (
-            opts.title.replace("\\", "").replace(":", "\\:").replace("'", "’")
-            .replace("%", "\\%")
-        )
+        text, size = _fit_title(opts.title)
         filters.append(
-            f"{last}drawtext=text='{safe}':fontfile={settings.render_font_file}:"
-            f"fontsize=54:fontcolor=white:borderw=5:bordercolor=black@0.9:"
-            f"x=(w-text_w)/2:y=140:line_spacing=8[titled]"
+            f"{last}drawtext=text='{text}':fontfile={settings.render_font_file}:"
+            f"fontsize={size}:fontcolor=white:borderw=5:bordercolor=black@0.9:"
+            f"x=(w-text_w)/2:y=130:line_spacing=10[titled]"
         )
         last = "[titled]"
 

@@ -296,10 +296,11 @@ async def run_pipeline(ctx: JobContext) -> int:
         )
         if not visual_hits and proposer.context.game:
             # "0 momentos" sin explicacion parece un fallo: es una respuesta legitima.
+            fuentes = "el audio y el chat" if chat_available else "el audio"
             await ctx.warn(
                 f"Analisis visual: nada visualmente destacable en este VOD "
-                f"(juego detectado: {proposer.context.game}). Los momentos vienen del "
-                f"audio y el chat."
+                f"(juego detectado: {proposer.context.game}). Los momentos vienen de "
+                f"{fuentes}."
             )
     else:
         reason = (
