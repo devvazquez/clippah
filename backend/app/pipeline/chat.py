@@ -31,6 +31,12 @@ VIDEO_COMMENTS_SHA = "b70a3591ff0f4e0313d126c6a1502d79a1c02baebb288227c582044aa7
 
 PAGE_SLEEP_S = 0.3
 MAX_BACKOFF_ATTEMPTS = 5
+# Cuando se le pide un offset posterior al ultimo comentario, el GQL devuelve otra vez
+# la cola del chat en lugar de una pagina vacia. Si nos limitamos a avanzar al
+# `ultimo + 1` acabamos rastreando el VOD segundo a segundo (miles de peticiones para
+# tres mensajes). Ante una pagina que no avanza, saltamos hacia delante con pasos
+# crecientes: asi cruzamos huecos reales del chat y terminamos rapido si no hay mas.
+STALL_PROBE_STEPS_S = (120, 240, 480)
 
 
 def normalize_twitch_id(ext_id: str) -> str:
@@ -80,7 +86,7 @@ async def fetch_twitch_chat(
     messages: list[ChatMessage] = []
     seen: set[str] = set()
     offset = 0
-    empty_pages = 0
+    stalled = 0
 
     headers = {
         "Client-ID": TWITCH_CLIENT_ID,
@@ -101,13 +107,17 @@ async def fetch_twitch_chat(
             batch, last_offset = _parse_twitch_edges(edges, seen)
             messages.extend(batch)
 
-            if not edges:
-                empty_pages += 1
-                if empty_pages >= 2:
+            # Pagina improductiva: vacia, sin mensajes nuevos, o que no llega mas alla
+            # de lo que pedimos (la API nos esta devolviendo la cola otra vez).
+            advanced = last_offset is not None and last_offset >= offset
+            if not batch or not advanced:
+                if stalled >= len(STALL_PROBE_STEPS_S):
                     break
-                offset += 30
+                offset += STALL_PROBE_STEPS_S[stalled]
+                stalled += 1
+                await asyncio.sleep(PAGE_SLEEP_S)
                 continue
-            empty_pages = 0
+            stalled = 0
 
             if progress and duration > 0:
                 await progress(
@@ -115,8 +125,7 @@ async def fetch_twitch_chat(
                     f"Chat: {len(messages):,} mensajes".replace(",", "."),
                 )
 
-            nxt = int(last_offset) + 1 if last_offset is not None else offset + 30
-            offset = max(nxt, offset + 1)
+            offset = max(int(last_offset) + 1, offset + 1)
             await asyncio.sleep(PAGE_SLEEP_S)
 
     if not messages:
