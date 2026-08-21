@@ -8,6 +8,11 @@ from pathlib import Path
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+# Raiz del backend (donde viven pyproject.toml y .env). Todas las rutas relativas se
+# resuelven contra esto y no contra el cwd: si no, un script lanzado desde la raiz del
+# repo crearia su propio ./data en otro sitio y no reutilizaria la cache del servidor.
+BACKEND_ROOT = Path(__file__).resolve().parents[1]
+
 # Emotes y expresiones de hype. Se definen aqui (no en la logica de senales) para poder
 # ajustarlos por streamer/idioma sin tocar el pipeline.
 DEFAULT_HYPE_EMOTES = (
@@ -39,7 +44,7 @@ def _split_words(raw: str) -> list[str]:
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=(".env", "../.env"),
+        env_file=(BACKEND_ROOT / ".env", BACKEND_ROOT.parent / ".env"),
         env_file_encoding="utf-8",
         extra="ignore",
         case_sensitive=False,
@@ -112,6 +117,11 @@ class Settings(BaseSettings):
     # --- Hype ---
     hype_emotes: str = Field(default=DEFAULT_HYPE_EMOTES)
     hype_keywords: str = Field(default=DEFAULT_HYPE_KEYWORDS)
+
+    @field_validator("data_dir")
+    @classmethod
+    def _resolve_data_dir(cls, v: Path) -> Path:
+        return v if v.is_absolute() else (BACKEND_ROOT / v).resolve()
 
     @field_validator("download_mode")
     @classmethod

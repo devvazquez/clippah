@@ -10,6 +10,8 @@ venv/
 # Backend data (media, thumbs, sqlite)
 backend/data/
 !backend/data/.gitkeep
+# Red de seguridad: ningun data/ suelto en el repo
+/data/
 
 # Env
 .env
