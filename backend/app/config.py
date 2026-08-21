@@ -161,8 +161,14 @@ class Settings(BaseSettings):
     # justo lo que queda libre entre las dos camaras.
     render_cam_top: str = "0.018,0.062,0.300,0.298"
     render_cam_bottom: str = "0.685,0.630,0.315,0.362"
-    render_cam_band: int = 420          # alto de cada banda de camara, en px de 1920
-                                    # (420+1080+420: el juego queda cuadrado)
+    # Alto de cada banda de camara. Una webcam de 611x371 (proporcion 1.65) metida en una
+    # banda de 1080 de ancho tiene que escalarse 1.77x para cubrirla, asi que cuanto mas
+    # baja sea la banda, mas se recorta por arriba y por abajo: con 420 se tiraban 118 px
+    # por lado y se comian la frente y la barbilla.
+    render_cam_band: int = 520
+    # De lo que sobra al recortar, que fraccion se quita por arriba. La cara vive en la
+    # parte alta del encuadre de una webcam, asi que conviene tirar mas por abajo.
+    render_cam_anchor: float = 0.30
 
     # --- Efectos de sonido ---
     render_sfx: bool = True

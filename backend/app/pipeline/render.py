@@ -291,6 +291,7 @@ def _layout_filters(layout: str, opts: RenderOptions) -> list[str]:
         )
         band = max(120, min(settings.render_cam_band, (OUT_H - 400) // 2))
         game_h = OUT_H - 2 * band
+        anchor = clamp(settings.render_cam_anchor, 0.0, 1.0)
         if not (top and bottom):
             log.warning("coordenadas de camara invalidas: se cae al layout blur")
         else:
@@ -316,13 +317,13 @@ def _layout_filters(layout: str, opts: RenderOptions) -> list[str]:
                 "[0:v]split=3[ct][cg][cb]",
                 f"[ct]crop=w=iw*{tw:.4f}:h=ih*{th:.4f}:x=iw*{tx:.4f}:y=ih*{ty:.4f},"
                 f"scale={OUT_W}:{band}:force_original_aspect_ratio=increase:flags=lanczos,"
-                f"crop={OUT_W}:{band},setsar=1[topv]",
+                f"crop={OUT_W}:{band}:0:'(ih-{band})*{anchor:.3f}',setsar=1[topv]",
                 f"[cg]crop=w=iw*{crop_w:.4f}:h=ih*{crop_h:.4f}:"
                 f"x=iw*{cx:.4f}:y=ih*{cy:.4f},"
                 f"scale={OUT_W}:{game_h}:flags=lanczos,setsar=1[gamev]",
                 f"[cb]crop=w=iw*{bw:.4f}:h=ih*{bh:.4f}:x=iw*{bx:.4f}:y=ih*{by:.4f},"
                 f"scale={OUT_W}:{band}:force_original_aspect_ratio=increase:flags=lanczos,"
-                f"crop={OUT_W}:{band},setsar=1[botv]",
+                f"crop={OUT_W}:{band}:0:'(ih-{band})*{anchor:.3f}',setsar=1[botv]",
                 "[topv][gamev][botv]vstack=inputs=3,setsar=1[comp]",
             ]
 
