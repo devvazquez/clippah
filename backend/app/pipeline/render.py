@@ -50,13 +50,21 @@ ASS_HEADER = (
     "[Script Info]\nScriptType: v4.00+\nPlayResX: {w}\nPlayResY: {h}\n"
     "WrapStyle: 0\nScaledBorderAndShadow: yes\n\n"
     "[V4+ Styles]\n" + _STYLE_FORMAT + "\n"
-    # BorderStyle 4 dibuja una caja detras de cada linea: sobre el HUD del juego un
-    # borde solo no basta, el texto pelea con los corazones y la barra de objetos.
-    "Style: Caption,{font},{size},&H00FFFFFF,&H00FFFFFF,&H00101010,&H55101010,"
-    "-1,0,0,0,100,100,0,0,4,{outline},0,2,60,60,{marginv},1\n\n"
+    # BorderStyle 4: una caja por linea, del ancho del texto. Es lo que separa la voz del
+    # fondo sobre cualquier gameplay; la caja va traslucida (`alpha`) para no comerse el
+    # plano como el bloque casi opaco de antes.
+    "Style: Caption,{font},{size},&H00FFFFFF,&H00FFFFFF,&H00141414,&H{alpha}000000,"
+    "-1,0,0,0,100,100,0,0,4,{outline},{shadow},2,60,60,{marginv},1\n\n"
 
     "[Events]\n" + _EVENT_FORMAT + "\n"
 )
+
+
+@dataclass(slots=True)
+class SubtitleCue:
+    start: float
+    end: float
+    text: str
 
 
 @dataclass(slots=True)
@@ -68,16 +76,11 @@ class RenderResult:
     layout: str
     captions: int
     size_bytes: int = 0
+    # Las frases tal como han quedado quemadas, para poder editarlas despues.
+    cues: list[SubtitleCue] = field(default_factory=list)
     sfx: int = 0
     music: str = ""
     social: bool = False
-
-
-@dataclass(slots=True)
-class SubtitleCue:
-    start: float
-    end: float
-    text: str
 
 
 @dataclass(slots=True)
@@ -90,6 +93,9 @@ class RenderOptions:
     facecam: tuple[float, float, float, float] | None = None  # x,y,w,h en fraccion
     cam_layout: dict[str, list[float]] | None = None  # detectado por vision.py
     words: list[Word] = field(default_factory=list)
+    # Frases ya montadas. Si vienen, se queman tal cual y no se agrupan las palabras:
+    # es la via por la que entran los subtitulos corregidos a mano.
+    cues: list[SubtitleCue] | None = None
     sfx: list[SfxCue] = field(default_factory=list)
     music: str = ""               # nombre del fichero en assets/music (vacio = ninguna)
     social: bool | None = None
@@ -240,8 +246,9 @@ def build_ass(
 ) -> str:
     head = ASS_HEADER.format(
         w=OUT_W, h=OUT_H,
-        font=settings.render_font, size=settings.render_font_size,
-        outline=settings.render_outline, marginv=sub_marginv,
+        font=settings.font_family, size=settings.render_font_size,
+        outline=settings.render_outline, shadow=settings.render_shadow,
+        alpha=settings.render_box_alpha, marginv=sub_marginv,
     )
     lines: list[str] = []
     for c in cues:
@@ -371,7 +378,7 @@ async def render_clip(
         title_marginv = 130
         sub_marginv = SUB_MARGIN_V
 
-    cues = group_words(
+    cues = opts.cues if opts.cues is not None else group_words(
         opts.words, t_start, t_end,
         max_words=settings.render_words_per_line,
         max_chars=settings.render_chars_per_line,
@@ -415,7 +422,12 @@ async def render_clip(
             encoding="utf-8",
         )
         escaped = str(ass_path).replace("\\", "\\\\").replace(":", r"\:").replace("'", r"\'")
-        filters.append(f"{last}ass=filename='{escaped}'[subbed]")
+        # `fontsdir` es lo que hace que libass encuentre Montserrat sin instalarla en el
+        # sistema; sin esto cae a la fuente por defecto y el estilo se pierde.
+        fonts = str(settings.fonts_dir).replace("\\", "/").replace(":", r"\\:")
+        filters.append(
+            f"{last}ass=filename='{escaped}':fontsdir='{fonts}'[subbed]"
+        )
         last = "[subbed]"
     if not cues:
         log.info("clip %s sin palabras alineadas: se renderiza sin subtitulos", moment["id"])
@@ -491,7 +503,7 @@ async def render_clip(
         await progress(1.0, "Clip listo")
     return RenderResult(
         path=out, width=OUT_W, height=OUT_H, duration=duration, layout=layout,
-        captions=len(cues), size_bytes=out.stat().st_size,
+        captions=len(cues), cues=cues, size_bytes=out.stat().st_size,
         sfx=len([m for m in mixed if m != "[music]"]), music=music_name,
         social=show_social,
     )

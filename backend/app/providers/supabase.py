@@ -107,6 +107,13 @@ class Supabase:
         if r.status_code >= 400:
             raise SupabaseError(f"subida de {path} fallo ({r.status_code}): {r.text[:300]}")
 
+    async def delete(self, path: str) -> None:
+        """Borra un objeto. Que ya no exista no es un error: el fin es que no este."""
+        url = f"{self._storage}/object/{settings.supabase_bucket}/{path}"
+        r = await self._client.delete(url)
+        if r.status_code >= 400 and r.status_code != 404:
+            log.warning("no se pudo borrar %s (%s): %s", path, r.status_code, r.text[:200])
+
     async def signed_url(self, path: str, *, expires_in: int = 3600) -> str:
         url = f"{self._storage}/object/sign/{settings.supabase_bucket}/{path}"
         r = await self._client.post(url, content=json.dumps({"expiresIn": expires_in}))

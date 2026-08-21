@@ -29,6 +29,15 @@ export interface ClipRequest {
   updated_at: string;
 }
 
+export type RenderStatus = "ready" | "rerender_queued" | "rendering" | "error";
+
+/** Una frase de subtitulo, en segundos desde el inicio del clip. */
+export interface Cue {
+  text: string;
+  start: number;
+  end: number;
+}
+
 export interface Clip {
   id: string;
   request_id: string | null;
@@ -53,6 +62,12 @@ export interface Clip {
   transcript: string | null;
   reason: string | null;
   created_at: string;
+  // Subtitulos: `captions` es lo que hay quemado; `captions_edited` lo que espera render.
+  captions: Cue[];
+  captions_edited: Cue[] | null;
+  render_status: RenderStatus;
+  render_error: string | null;
+  version: number;
 }
 
 export const MUSIC_LABELS: Record<string, string> = {

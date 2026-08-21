@@ -113,7 +113,7 @@ def build_social_bar(links: list[SocialLink], out: Path) -> Path:
     d.rounded_rectangle([0, 0, BAR_W - 1, BAR_H - 1], radius=BAR_H // 2,
                         fill=(10, 10, 12, 205))
     try:
-        font = ImageFont.truetype(settings.render_font_file, FONT_SIZE)
+        font = ImageFont.truetype(str(settings.font_file), FONT_SIZE)
     except OSError:
         font = ImageFont.load_default()
         log.warning("fuente no encontrada para la barra de redes: se usa la de defecto")
@@ -228,7 +228,7 @@ def build_title_card(
     text: str, out: Path, *, max_w: int = 940, size: int = 58, max_lines: int = 2
 ) -> tuple[Path, int, int]:
     """Pinta el titulo (con emojis en color) sobre PNG transparente."""
-    text_font = ImageFont.truetype(settings.render_font_file, size)
+    text_font = ImageFont.truetype(str(settings.font_file), size)
     emo_font = _emoji_font(size)
     probe = ImageDraw.Draw(Image.new("RGBA", (8, 8)))
 

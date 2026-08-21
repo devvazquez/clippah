@@ -13,13 +13,13 @@ BACKEND_PORT ?= 8000
 FRONTEND_PORT ?= 3000
 
 .DEFAULT_GOAL := help
-.PHONY: help setup setup-backend setup-frontend setup-local dev backend frontend export check check-queue lint typecheck fmt clean clean-data doctor
+.PHONY: help setup setup-backend setup-frontend setup-font setup-local dev backend frontend export check check-queue lint typecheck fmt clean clean-data doctor
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 	  awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-setup: setup-backend setup-frontend setup-emoji ## Instala todas las dependencias
+setup: setup-backend setup-frontend setup-emoji setup-font ## Instala todas las dependencias
 
 setup-backend: ## Crea el venv del backend e instala dependencias
 	$(PY) -m venv $(VENV)
@@ -38,6 +38,14 @@ setup-emoji: ## Baja el artwork de emojis de Apple para los titulos de los clips
 	 cp -r $$tmp/node_modules/emoji-datasource-apple/img/apple/64 $(CURDIR)/backend/assets/emoji/apple; \
 	 rm -rf $$tmp; \
 	 echo "$$(ls $(CURDIR)/backend/assets/emoji/apple | wc -l) emojis instalados"
+
+setup-font: ## Baja las dos fuentes del clip: Montserrat (titulo) y Barlow (subtitulos)
+	@mkdir -p backend/assets/fonts
+	@curl -fsSL -o backend/assets/fonts/Montserrat-Bold.ttf \
+	  https://raw.githubusercontent.com/JulietaUla/Montserrat/master/fonts/ttf/Montserrat-Bold.ttf
+	@curl -fsSL -o backend/assets/fonts/Barlow-Bold.ttf \
+	  https://raw.githubusercontent.com/google/fonts/main/ofl/barlow/Barlow-Bold.ttf
+	@echo "fuentes instaladas: $$(ls backend/assets/fonts | tr '\n' ' ')"
 
 setup-frontend: ## Instala las dependencias del frontend
 	cd frontend && npm install

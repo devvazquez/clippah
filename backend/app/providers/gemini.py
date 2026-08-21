@@ -44,6 +44,15 @@ Para cada fragmento devuelve:
 - category: reaccion | gracioso | habilidad | fail | polemica | informativo | otro
 - hook: que se ve u oye en los primeros 2 segundos del fragmento, max 80 caracteres. Si no hay nada que enganche, dilo tal cual.
 - clip_title: el titulo que va QUEMADO encima del video vertical, max 42 caracteres. Otro registro que `title`: como lo escribiria el propio streamer en el post, natural y con gracia, nada de resumen periodistico. Uno o dos emojis que aporten (el remate, la emocion), no de adorno ni al principio de la frase. Tono de internet en espanol, algo autoparodico, sin exclamaciones vacias ni mayusculas gritadas.
+  Y sobre todo CONCRETO: tiene que nombrar la cosa de este clip. Quien lo lee esta
+  decidiendo en dos segundos si se queda, y una plantilla que le encaja a cualquier video
+  ("cuando te cruzas a los pesados de siempre", "momentos que no tienen sentido") no le
+  dice nada y se va. Saca del transcript o de `visto_en_pantalla` el sustantivo que lo
+  hace este momento y no otro: el bicho, el objeto, el juego, el mote, la cifra, la
+  persona. Si el clip es de zombies, que salga el zombie; si es una muerte tonta con
+  lava, que salga la lava. Regla para comprobarlo: si el titulo valdria igual para otro
+  clip distinto, esta mal y hay que rehacerlo con lo que se ve o se oye aqui.
+  Prohibido inventarse lo que no aparece: concreto, pero solo con lo que hay.
 - sfx: si al clip le pega un efecto de sonido de edicion. "riser_golpe" cuando hay una subida de tension que desemboca en algo (un susto, una aparicion, un remate que se ve venir): el riser sube y el golpe cae encima. "golpe" cuando el remate llega de golpe sin aviso (un fallo, una frase lapidaria, una muerte tonta). "ninguno" cuando meterlo quedaria forzado y cutre: conversacion tranquila, explicaciones, anecdotas sin punto de giro. Ante la duda, "ninguno": un efecto mal puesto se nota mas que su ausencia.
 - music: musica de fondo a volumen muy bajo, casi subliminal, para que el clip no suene a habitacion vacia. Por defecto TODO clip lleva musica: elige la que le pegue al tono. "fluffing_a_duck" para lo comico, lo absurdo y la charla con gracia, la mas socorrida y la que eliges si dudas. "sneaky_snitch" para lo travieso, lo que se hace a escondidas o con mala idea. "sneaky_adventure" para lo que tiene aire de aventura, exploracion o tension contenida. "ninguna" solo en el caso excepcional de que el clip ya traiga su propia musica o un ruido continuo con el que la pista chocaria; que un momento sea de hablar tranquilo NO es motivo para dejarlo sin musica.
 - clip_score: 0-100 segun los criterios de arriba

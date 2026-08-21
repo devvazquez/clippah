@@ -81,6 +81,30 @@ create table if not exists public.clips (
   created_at    timestamptz not null default now()
 );
 
+-- Subtitulos editables. `captions` es lo que hay quemado en el mp4 ahora mismo;
+-- `captions_edited` es lo que ha escrito la interfaz y el backend aun no ha renderizado.
+-- Cada cue es {"text": "...", "start": 1.2, "end": 2.0}, en segundos desde el inicio del
+-- clip. `version` sube en cada re-render: el mp4 nuevo va a otra ruta para que ningun
+-- navegador sirva el viejo de su cache.
+alter table public.clips add column if not exists captions        jsonb not null default '[]'::jsonb;
+alter table public.clips add column if not exists captions_edited jsonb;
+alter table public.clips add column if not exists render_status   text not null default 'ready';
+alter table public.clips add column if not exists render_error    text;
+alter table public.clips add column if not exists version         int not null default 1;
+
+do $$
+begin
+  if not exists (
+    select 1 from pg_constraint where conname = 'clips_render_status_check'
+  ) then
+    alter table public.clips add constraint clips_render_status_check
+      check (render_status in ('ready', 'rerender_queued', 'rendering', 'error'));
+  end if;
+end $$;
+
+create index if not exists clips_rerender_idx
+  on public.clips (render_status, created_at) where render_status = 'rerender_queued';
+
 create index if not exists clips_request_idx on public.clips (request_id);
 create index if not exists clips_created_idx on public.clips (created_at desc);
 
@@ -149,6 +173,19 @@ create policy "anon cancela lo que aun no ha empezado" on public.clip_requests
   for update to anon, authenticated
   using (status = 'queued')
   with check (status = 'canceled');
+
+-- Editar subtitulos es lo unico que la interfaz puede escribir en un clip. RLS no
+-- distingue columnas, asi que la restriccion de verdad son los permisos: se le quita el
+-- UPDATE entero y se le devuelve solo sobre esas dos columnas. Con eso, un cliente con la
+-- clave anon no puede reescribir el titulo, la puntuacion ni la ruta del mp4.
+revoke update on public.clips from anon, authenticated;
+grant update (captions_edited, render_status) on public.clips to anon, authenticated;
+
+drop policy if exists "anon pide re-render con subtitulos nuevos" on public.clips;
+create policy "anon pide re-render con subtitulos nuevos" on public.clips
+  for update to anon, authenticated
+  using (render_status in ('ready', 'error'))
+  with check (render_status = 'rerender_queued');
 
 drop policy if exists "anon lee los clips" on public.clips;
 create policy "anon lee los clips" on public.clips

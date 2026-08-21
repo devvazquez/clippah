@@ -8,7 +8,7 @@
  */
 
 import { type SupabaseClient, createClient } from "@supabase/supabase-js";
-import type { Clip, ClipRequest } from "@/lib/types";
+import type { Clip, ClipRequest, Cue } from "@/lib/types";
 
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
@@ -108,6 +108,27 @@ export async function signClips(paths: string[]): Promise<Record<string, string>
 export function downloadUrl(signed: string, filename: string): string {
   const sep = signed.includes("?") ? "&" : "?";
   return `${signed}${sep}download=${encodeURIComponent(filename)}`;
+}
+
+/**
+ * Guarda los subtitulos corregidos y pide que se vuelva a quemar el clip.
+ *
+ * De un clip, la interfaz solo puede escribir estas dos columnas: los permisos de la
+ * tabla no le dan el resto (ver `supabase/schema.sql`). El worker de la sandbox ve el
+ * `rerender_queued`, rehace el mp4 y devuelve la fila a `ready`.
+ */
+export async function saveCaptions(clipId: string, cues: Cue[]): Promise<void> {
+  const sb = supabase();
+  if (!sb) throw new Error("Falta configurar las claves de Supabase");
+  const clean = cues
+    .map((c) => ({ text: c.text.trim(), start: c.start, end: c.end }))
+    .filter((c) => c.text.length > 0);
+  if (clean.length === 0) throw new Error("No queda ninguna frase con texto");
+  const { error } = await sb
+    .from("clips")
+    .update({ captions_edited: clean, render_status: "rerender_queued" })
+    .eq("id", clipId);
+  if (error) throw new Error(error.message);
 }
 
 // -------------------------------------------------------------------- realtime

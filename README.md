@@ -55,6 +55,7 @@ ninguna clave la app funciona igual, solo más lenta y con títulos menos ricos.
 | `make check-queue` | Prueba el puente con Supabase contra un servidor de mentira |
 | `make doctor` | Comprueba ffmpeg/ffprobe y las dependencias |
 | `make setup-emoji` | Baja el artwork de emojis de Apple para los títulos |
+| `make setup-font` | Baja Montserrat (título) y Barlow (subtítulos) |
 | `make clean-data` | Borra media, miniaturas y la base de datos |
 
 ---
@@ -85,6 +86,11 @@ directamente: comparten un proyecto de Supabase.
 - **Los clips se sirven desde Storage** con URLs firmadas de 12 h. El botón de descarga usa
   `?download=<nombre>`, que hace que Storage mande `Content-Disposition: attachment`: el
   mp4 se guarda con un nombre legible en vez de abrirse en una pestaña.
+- **Los subtítulos se editan desde la interfaz.** Cada clip guarda las frases que lleva
+  quemadas; el botón de subtítulos abre el texto, se corrige lo que Whisper oyó mal, y al
+  guardar el worker vuelve a quemar el clip y lo sube como versión nueva (otra ruta, para
+  que ningún navegador siga sirviendo el mp4 viejo de su caché). De un clip, la clave anon
+  solo puede escribir esas dos columnas: no es RLS, son permisos por columna.
 
 ### Montarlo
 
@@ -284,10 +290,19 @@ Lo que se renderiza:
 - **Subtítulos quemados de 2-3 palabras**, generados desde los timestamps de palabra que
   ya produce la transcripción. Dos o tres palabras se leen de un vistazo; una frase
   entera obliga a parar el scroll, que es lo contrario de lo que se busca. Van en
-  mayúsculas, con borde negro grueso, y **por encima del 20 % inferior** del lienzo,
-  donde las plataformas ponen su propia interfaz.
+  **Barlow Bold sobre una caja traslúcida por línea**, en minúsculas, y **por encima del
+  20 % inferior** del lienzo, donde las plataformas ponen su propia interfaz. Antes iban
+  en mayúsculas dentro de un bloque casi opaco: se leían sobre cualquier fondo, pero se
+  comían el plano y el ojo se iba al texto en vez de a lo que pasaba. La caja traslúcida
+  aguanta igual sobre el HUD del juego sin taparlo. Se corrigen desde la interfaz: ver
+  [La interfaz y la cola](#la-interfaz-y-la-cola-supabase).
 - **Título quemado escrito por Gemini**, en otro registro que el de la interfaz: como lo
-  pondría el propio streamer en el post, con uno o dos emojis que aporten. Del mismo VOD
+  pondría el propio streamer en el post, con uno o dos emojis que aporten, y en
+  **Montserrat Bold sin caja** — dos familias a propósito, porque con la misma fuente y
+  el mismo peso el título y los subtítulos se leían como el mismo bloque. El prompt le
+  exige ser concreto: tiene que nombrar la cosa de *este* clip (el bicho, el objeto, la
+  cifra), porque una plantilla que le encaja a cualquier vídeo («cuando te cruzas a los
+  pesados de siempre») no retiene a nadie. Del mismo VOD
   salieron «traumas infantiles desbloqueados 🧸» y «dando el DNI en directo 💀» donde la
   interfaz decía «Anécdota de la infancia y juguetes prohibidos». Se dibuja con Pillow y
   no con libass, porque libass rasteriza los emojis en monocromo. Los emojis son los de

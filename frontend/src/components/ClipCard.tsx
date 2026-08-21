@@ -1,8 +1,9 @@
 "use client";
 
-import { Copy, Download, ExternalLink } from "lucide-react";
+import { Copy, Download, ExternalLink, Loader2, Subtitles } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
+import { CaptionEditor } from "@/components/CaptionEditor";
 import { Button } from "@/components/ui/button";
 import { downloadUrl } from "@/lib/supabase";
 import { type Clip, MUSIC_LABELS, SFX_LABELS } from "@/lib/types";
@@ -30,6 +31,8 @@ function vodLink(clip: Clip): string | null {
 }
 
 export function ClipCard({ clip, src }: { clip: Clip; src?: string }) {
+  const [editing, setEditing] = React.useState(false);
+  const busy = clip.render_status === "rerender_queued" || clip.render_status === "rendering";
   const tone = scoreTone(clip.score ?? 0);
   const music = MUSIC_LABELS[clip.music ?? ""] ?? "";
   const sfx = SFX_LABELS[clip.sfx ?? ""] ?? "";
@@ -47,6 +50,12 @@ export function ClipCard({ clip, src }: { clip: Clip; src?: string }) {
   return (
     <article className="card animate-fade-in flex flex-col overflow-hidden">
       <div className="relative bg-black">
+        {busy ? (
+          <p className="absolute inset-x-0 top-0 z-10 flex items-center justify-center gap-1.5 bg-black/75 py-1.5 text-[11px] text-ink">
+            <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
+            rehaciendo subtítulos
+          </p>
+        ) : null}
         {src ? (
           // eslint-disable-next-line jsx-a11y/media-has-caption -- los subtitulos van quemados
           <video
@@ -95,6 +104,10 @@ export function ClipCard({ clip, src }: { clip: Clip; src?: string }) {
           </p>
         ) : null}
 
+        {clip.render_status === "error" && clip.render_error ? (
+          <p className="text-[11px] text-danger">{clip.render_error}</p>
+        ) : null}
+
         {clip.t_start != null ? (
           // El directo lo dice la cabecera del grupo: aqui solo hace falta el minuto.
           <p className="tnum text-[11px] text-ink-faint">minuto {hhmmss(clip.t_start)}</p>
@@ -118,6 +131,15 @@ export function ClipCard({ clip, src }: { clip: Clip; src?: string }) {
             <Download className="h-3.5 w-3.5" aria-hidden />
             Descargar
           </Button>
+          <Button
+            variant="outline"
+            size="icon"
+            onClick={() => setEditing(true)}
+            disabled={busy}
+            title="Editar los subtítulos"
+          >
+            <Subtitles className="h-3.5 w-3.5" aria-hidden />
+          </Button>
           <Button variant="outline" size="icon" onClick={copyTitle} title="Copiar el título">
             <Copy className="h-3.5 w-3.5" aria-hidden />
           </Button>
@@ -134,6 +156,13 @@ export function ClipCard({ clip, src }: { clip: Clip; src?: string }) {
           ) : null}
         </div>
       </div>
+
+      <CaptionEditor
+        clip={clip}
+        src={src}
+        open={editing}
+        onClose={() => setEditing(false)}
+      />
     </article>
   );
 }

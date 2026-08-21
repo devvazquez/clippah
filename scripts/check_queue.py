@@ -110,6 +110,12 @@ async def upload(bucket: str, path: str, request: Request) -> dict[str, str]:
     return {"Key": f"{bucket}/{path}"}
 
 
+@stub.delete("/storage/v1/object/{bucket}/{path:path}")
+async def remove(bucket: str, path: str) -> dict[str, str]:
+    fake.objects.pop(f"{bucket}/{path}", None)
+    return {"message": "Successfully deleted"}
+
+
 @stub.post("/storage/v1/object/sign/{bucket}/{path:path}")
 async def sign(bucket: str, path: str) -> dict[str, str]:
     return {"signedURL": f"/object/sign/{bucket}/{path}?token=fake"}
@@ -124,12 +130,20 @@ async def healthz() -> Response:
 
 
 async def pick_job() -> tuple[str, dict[str, Any], str]:
-    """Un job terminado cuyo mejor momento ya tenga el mp4 en disco."""
+    """Un job terminado cuyo *mejor* momento ya tenga el mp4 en disco.
+
+    Tiene que ser el mejor del job, porque es el que el worker renderiza al atender una
+    peticion de un clip: si se elige otro, la prueba espera un fichero que nadie sube.
+    """
     rows = await db.fetch_all(
         """SELECT m.job_id, m.id AS moment_id, m.video_id, m.clip_path
              FROM moments m JOIN jobs j ON j.id = m.job_id
             WHERE j.status = 'done' AND m.clip_path IS NOT NULL AND m.clip_path <> ''
-            ORDER BY m.final_score DESC LIMIT 1"""
+              AND m.final_score = (
+                    SELECT MAX(x.final_score) FROM moments x WHERE x.job_id = m.job_id
+              )
+            -- El mas corto: la prueba renderiza dos veces y el clip largo la eterniza.
+            ORDER BY (m.t_end - m.t_start) ASC LIMIT 1"""
     )
     if not rows:
         print("No hay ningun momento con clip renderizado: primero genera uno")
@@ -173,13 +187,37 @@ async def main() -> None:
             break
         await asyncio.sleep(0.05)
 
+    async def until(done, limit: int = 3000) -> None:
+        for _ in range(limit):                     # 5 min de margen: renderiza de verdad
+            if done():
+                return
+            await asyncio.sleep(0.1)
+
     worker = queue.QueueWorker()
     await worker.start()
+    scene1: dict[str, Any] = {}
     try:
-        for _ in range(600):                       # 60 s de margen
-            if fake.clip_requests[0]["status"] in ("done", "error"):
-                break
-            await asyncio.sleep(0.1)
+        await until(lambda: fake.clip_requests[0]["status"] in ("done", "error"))
+        # Foto de como quedo la primera escena: la segunda reemplaza el objeto y la ruta,
+        # y si no se guarda esto las comprobaciones de la primera miran el resultado de
+        # la segunda.
+        scene1 = {
+            "objects": dict(fake.objects),
+            "storage_path": fake.clips[0]["storage_path"] if fake.clips else "",
+        }
+        # --- segunda escena: alguien corrige un subtitulo desde la interfaz
+        if fake.clips:
+            clip = fake.clips[0]
+            before = list(clip.get("captions") or [])
+            edited = [
+                {**c, "text": "PRUEBA" if i == 0 else c["text"]}
+                for i, c in enumerate(before)
+            ] or [{"text": "PRUEBA", "start": 0.5, "end": 2.0}]
+            first_path = clip["storage_path"]
+            clip["captions_edited"] = edited
+            clip["render_status"] = "rerender_queued"
+            await until(lambda: clip.get("render_status") in ("ready", "error")
+                        and clip.get("storage_path") != first_path)
     finally:
         await worker.stop()
         server.should_exit = True
@@ -205,8 +243,8 @@ async def main() -> None:
     check("pasa por render", "render" in stages, " -> ".join(stages))
     check("sube el mp4", any(
         p.endswith(f"{moment_id}.mp4") and size > 1_000_000
-        for p, size in fake.objects.items()
-    ), ", ".join(f"{p} ({s / 1048576:.1f} MB)" for p, s in fake.objects.items()))
+        for p, size in scene1["objects"].items()
+    ), ", ".join(f"{p} ({s / 1048576:.1f} MB)" for p, s in scene1["objects"].items()))
     check("escribe la fila del clip", len(fake.clips) == 1)
     if fake.clips:
         clip = fake.clips[0]
@@ -215,8 +253,29 @@ async def main() -> None:
               and bool(clip.get("video_url")),
               f"{clip.get('title')!r} {clip.get('duration_s')}s {clip.get('music')}")
         check("apunta al objeto subido",
-              clip.get("storage_path") == f"{REQUEST_ID}/{moment_id}.mp4",
+              scene1["storage_path"] == f"{REQUEST_ID}/{moment_id}.mp4",
+              str(scene1["storage_path"]))
+    print("\nSubtitulos corregidos -> re-render")
+    if not fake.clips:
+        check("hay un clip que editar", False)
+    else:
+        clip = fake.clips[0]
+        cues = clip.get("captions") or []
+        check("vuelve a ready", clip.get("render_status") == "ready",
+              str(clip.get("render_error") or ""))
+        check("sube de version", int(clip.get("version") or 0) == 2, str(clip.get("version")))
+        check("la ruta nueva lleva la version",
+              str(clip.get("storage_path", "")).endswith("-v2.mp4"),
               str(clip.get("storage_path")))
+        check("el objeto nuevo esta subido",
+              f"clips/{clip.get('storage_path')}" in fake.objects,
+              ", ".join(fake.objects))
+        check("el objeto viejo se borra", len(fake.objects) == 1, str(len(fake.objects)))
+        check("guarda el texto editado",
+              bool(cues) and cues[0]["text"] == "PRUEBA",
+              cues[0]["text"] if cues else "sin frases")
+        check("limpia el borrador", clip.get("captions_edited") is None)
+
     print("\n" + ("Todo correcto" if ok else "Hay fallos"))
     raise SystemExit(0 if ok else 1)
 

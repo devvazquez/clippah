@@ -25,6 +25,7 @@ import httpx
 from . import db, service
 from .config import settings
 from .models import ClipOut
+from .pipeline import render
 from .providers.supabase import Supabase, SupabaseError, configured
 from .utils import log
 
@@ -89,11 +90,18 @@ class QueueWorker:
                     log.warning("no se pudo leer la cola: %s", exc)
                     await self._sleep(min(30.0, settings.supabase_poll_s * 5))
                     continue
-                if request is None:
+                if request is not None:
+                    self.last_error = ""
+                    await self._process(sb, request)
+                    continue
+                # Sin nada nuevo que analizar, toca mirar si alguien ha corregido los
+                # subtitulos de un clip ya hecho.
+                clip = await self._claim_rerender(sb)
+                if clip is None:
                     await self._sleep(settings.supabase_poll_s)
                     continue
                 self.last_error = ""
-                await self._process(sb, request)
+                await self._rerender(sb, clip)
         except asyncio.CancelledError:
             raise
         finally:
@@ -120,11 +128,18 @@ class QueueWorker:
                 },
                 match={"status": "in.(claimed,running)"},
             )
+            clips = await sb.update(
+                CLIPS,
+                {"render_status": "rerender_queued"},
+                match={"render_status": "eq.rendering"},
+            )
         except (SupabaseError, httpx.HTTPError) as exc:
-            log.warning("no se pudieron reencolar las peticiones a medias: %s", exc)
+            log.warning("no se pudo reencolar lo que quedo a medias: %s", exc)
             return
         if rows:
             log.info("%d peticiones a medias devueltas a la cola", len(rows))
+        if clips:
+            log.info("%d re-renders a medias devueltos a la cola", len(clips))
 
     async def _claim(self, sb: Supabase) -> dict[str, Any] | None:
         """Coge la peticion mas antigua en cola, o None si no hay ninguna libre."""
@@ -149,6 +164,74 @@ class QueueWorker:
             match={"id": f"eq.{pending[0]['id']}", "status": "eq.queued"},
         )
         return claimed[0] if claimed else None
+
+    # ------------------------------------------------------ subtitulos corregidos
+
+    async def _claim_rerender(self, sb: Supabase) -> dict[str, Any] | None:
+        """Coge el clip mas antiguo con subtitulos pendientes de quemar."""
+        pending = await sb.select(
+            CLIPS,
+            params={
+                "select": "*", "render_status": "eq.rerender_queued",
+                "order": "created_at.asc", "limit": "1",
+            },
+        )
+        if not pending:
+            return None
+        claimed = await sb.update(
+            CLIPS,
+            {"render_status": "rendering", "render_error": None},
+            match={
+                "id": f"eq.{pending[0]['id']}",
+                "render_status": "eq.rerender_queued",
+            },
+        )
+        return claimed[0] if claimed else None
+
+    async def _rerender(self, sb: Supabase, clip: dict[str, Any]) -> None:
+        """Vuelve a quemar el clip con las frases que ha escrito la interfaz."""
+        clip_id = str(clip["id"])
+        moment_id = str(clip["moment_id"])
+        cues = clip.get("captions_edited") or clip.get("captions") or []
+        log.info("re-render de %s (%d frases)", moment_id, len(cues))
+        try:
+            result = await service.render_moment_clip(moment_id, cues=cues)
+            path = Path(render.clip_path(moment_id))
+            if not path.exists():
+                raise RuntimeError("el clip no aparecio en disco")
+            # Ruta nueva en cada version: una URL firmada apunta a un objeto concreto, y
+            # reemplazarlo por debajo deja a los navegadores sirviendo el mp4 viejo de su
+            # cache. Cambiando de ruta, lo que se ve es siempre lo ultimo.
+            version = int(clip.get("version") or 1) + 1
+            old_path = str(clip.get("storage_path") or "")
+            folder = old_path.rsplit("/", 1)[0] if "/" in old_path else "manual"
+            new_path = f"{folder}/{moment_id}-v{version}.mp4"
+            await sb.upload(new_path, path.read_bytes(), content_type="video/mp4")
+            await sb.update(CLIPS, {
+                "storage_path": new_path,
+                "size_bytes": result.size_bytes,
+                "duration_s": result.duration,
+                "captions": [c.model_dump() for c in result.cues],
+                "captions_edited": None,
+                "version": version,
+                "render_status": "ready",
+                "render_error": None,
+            }, match={"id": f"eq.{clip_id}"})
+            if old_path and old_path != new_path:
+                await sb.delete(old_path)
+            log.info("re-render de %s listo (v%d)", moment_id, version)
+        except asyncio.CancelledError:
+            with contextlib.suppress(Exception):
+                await sb.update(CLIPS, {"render_status": "rerender_queued"},
+                                match={"id": f"eq.{clip_id}"})
+            raise
+        except Exception as exc:  # noqa: BLE001 - un clip roto no puede parar la cola
+            log.exception("re-render de %s fallo", moment_id)
+            with contextlib.suppress(SupabaseError, httpx.HTTPError):
+                await sb.update(CLIPS, {
+                    "render_status": "error",
+                    "render_error": f"{type(exc).__name__}: {exc}"[:600],
+                }, match={"id": f"eq.{clip_id}"})
 
     # -------------------------------------------------------------- una peticion
 
@@ -318,13 +401,22 @@ def _clip_row(
         "music": str(moment.get("music") or "ninguna"),
         "transcript": str(moment.get("transcript") or ""),
         "reason": str(moment.get("description") or ""),
+        # Lo que lleva quemado ahora mismo: es lo que edita la interfaz.
+        "captions": [c.model_dump() for c in clip.cues],
+        "render_status": "ready",
+        "render_error": None,
     }
 
 
 async def publish_existing(
     sb: Supabase, moment_ids: list[str], *, request_id: str | None = None
 ) -> list[str]:
-    """Sube clips ya renderizados en disco (los de antes de conectar Supabase)."""
+    """Sube clips ya renderizados en disco (los de antes de conectar Supabase).
+
+    Si el clip ya estaba publicado, se respeta su carpeta y se sube como version nueva:
+    cambiar la ruta a mano dejaria la fila apuntando a un objeto que no existe, y
+    reescribir el mismo objeto haria que los navegadores siguieran con el mp4 viejo.
+    """
     published = []
     for moment_id in moment_ids:
         moment, video = await service.load_moment(moment_id)
@@ -334,12 +426,29 @@ async def publish_existing(
             continue
         clip = await service.render_moment_clip(moment_id)   # reutiliza el mp4 existente
         moment = {**moment, "video_url": video.get("url"), "video_title": video.get("title")}
-        storage_path = f"{request_id or 'manual'}/{moment_id}.mp4"
+
+        existing = await sb.select(CLIPS, params={
+            "select": "id,storage_path,version,request_id",
+            "moment_id": f"eq.{moment_id}", "limit": "1",
+        })
+        if existing:
+            old_path = str(existing[0].get("storage_path") or "")
+            folder = old_path.rsplit("/", 1)[0] if "/" in old_path else "manual"
+            version = int(existing[0].get("version") or 1) + 1
+            storage_path = f"{folder}/{moment_id}-v{version}.mp4"
+            keep_request = existing[0].get("request_id") or request_id
+        else:
+            old_path, version, keep_request = "", 1, request_id
+            storage_path = f"{request_id or 'manual'}/{moment_id}.mp4"
+
         await sb.upload(storage_path, path.read_bytes(), content_type="video/mp4")
-        await sb.insert(CLIPS, _clip_row(request_id, moment, clip, storage_path),
-                        upsert_on="moment_id")
+        row = _clip_row(keep_request, moment, clip, storage_path)
+        row["version"] = version
+        await sb.insert(CLIPS, row, upsert_on="moment_id")
+        if old_path and old_path != storage_path:
+            await sb.delete(old_path)
         published.append(moment_id)
-        log.info("subido %s (%.1f MB)", moment_id, path.stat().st_size / 1048576)
+        log.info("subido %s v%d (%.1f MB)", moment_id, version, path.stat().st_size / 1048576)
     return published
 
 

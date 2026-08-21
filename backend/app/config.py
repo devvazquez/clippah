@@ -11,6 +11,7 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 # Raiz del backend (donde viven pyproject.toml y .env). Todas las rutas relativas se
 # resuelven contra esto y no contra el cwd: si no, un script lanzado desde la raiz del
 # repo crearia su propio ./data en otro sitio y no reutilizaria la cache del servidor.
+SYSTEM_FONT = Path("/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf")
 BACKEND_ROOT = Path(__file__).resolve().parents[1]
 
 # Emotes y expresiones de hype. Se definen aqui (no en la logica de senales) para poder
@@ -138,15 +139,23 @@ class Settings(BaseSettings):
     # que impone Twitch), y el 60% cae entre 16 y 30 s.
     target_clip_s: float = 26.0
     render_layout: str = "blur"        # blur | crop | split
-    render_font: str = "DejaVu Sans"
-    render_font_file: str = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
-    render_font_size: int = 82
+    # Dos fuentes a proposito, que las instala `make setup-font`: el titulo es el reclamo
+    # del post y los subtitulos son la voz. Con la misma familia y el mismo peso los dos
+    # bloques se leian como si fueran lo mismo. Sin instalarlas se cae a DejaVu.
+    render_title_font: str = "Montserrat"     # geometrica, de cartel
+    render_font: str = "Barlow"               # algo estrecha, de subtitulo
+    render_font_size: int = 66
     render_title_size: int = 58
-    render_outline: int = 7
+    # BorderStyle 4 = caja por linea. `render_outline` es el margen de la caja y
+    # `render_box_alpha` lo transparente que queda (00 opaca, FF invisible): con 0x8C se
+    # lee sobre cualquier fondo sin tapar el gameplay como el bloque negro de antes.
+    render_outline: int = 8
     render_shadow: int = 0
+    render_box_alpha: str = "8C"
     render_words_per_line: int = 3     # 2-3 palabras se leen de un vistazo en vertical
     render_chars_per_line: int = 22
-    render_uppercase: bool = True
+    # En minusculas se lee mas tranquilo; TODO EN MAYUSCULAS grita y cansa.
+    render_uppercase: bool = False
     render_blur_sigma: int = 26
     # Zoom del bloque de video en el layout blur. 1.0 no recorta nada; subirlo agranda la
     # imagen a costa de los laterales, donde estos directos suelen tener la webcam.
@@ -245,6 +254,23 @@ class Settings(BaseSettings):
     @property
     def db_path(self) -> Path:
         return self.data_dir / "clipper.db"
+
+    @property
+    def fonts_dir(self) -> Path:
+        """Fuentes propias del proyecto (las instala `make setup-font`)."""
+        return BACKEND_ROOT / "assets" / "fonts"
+
+    @property
+    def font_file(self) -> Path:
+        """El .ttf del titulo quemado (lo dibuja Pillow), con reserva del sistema."""
+        montserrat = self.fonts_dir / "Montserrat-Bold.ttf"
+        return montserrat if montserrat.exists() else SYSTEM_FONT
+
+    @property
+    def font_family(self) -> str:
+        """Familia de los subtitulos para libass, segun lo que haya instalado."""
+        return self.render_font if (self.fonts_dir / "Barlow-Bold.ttf").exists() \
+            else "DejaVu Sans"
 
     @property
     def emoji_dir(self) -> Path:

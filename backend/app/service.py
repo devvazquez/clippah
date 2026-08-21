@@ -15,7 +15,7 @@ from typing import Any
 from . import db
 from .config import settings
 from .events import hub
-from .models import ClipOut, RenderSpec, Word
+from .models import CaptionCue, ClipOut, RenderSpec, Word
 from .pipeline import frames, render, vision
 from .pipeline.ingest import ProbeFailed, UnsupportedUrl, VodTooLong, probe, resolve_url
 from .pipeline.orchestrator import new_id, runner
@@ -138,16 +138,37 @@ async def load_moment(moment_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
     return moment, video
 
 
+def _cues(raw: list[dict[str, Any]]) -> list[render.SubtitleCue]:
+    """Frases guardadas -> frases de render, saneando tiempos y texto."""
+    out = []
+    for c in raw:
+        text = str(c.get("text") or "").strip()
+        if not text:
+            continue
+        start = max(0.0, float(c.get("start") or 0.0))
+        end = max(start + 0.2, float(c.get("end") or 0.0))
+        out.append(render.SubtitleCue(start=start, end=end, text=text))
+    return sorted(out, key=lambda c: c.start)
+
+
 async def render_moment_clip(
-    moment_id: str, *, layout: str = "", focus_x: float = 0.5
+    moment_id: str,
+    *,
+    layout: str = "",
+    focus_x: float = 0.5,
+    cues: list[dict[str, Any]] | None = None,
 ) -> ClipOut:
-    """Renderiza (o reutiliza) el vertical 9:16 de un momento."""
+    """Renderiza (o reutiliza) el vertical 9:16 de un momento.
+
+    Con `cues` se queman esas frases en vez de las que salen del transcript, y el clip
+    se rehace aunque ya estuviera en disco: es como entran los subtitulos corregidos.
+    """
     moment, video = await load_moment(moment_id)
     out = render.clip_path(moment_id)
-    # Un layout explicito siempre re-renderiza: es la forma de probar encuadres.
-    if out.exists() and out.stat().st_size > 4096 and not layout:
+    # Un layout explicito o unos subtitulos nuevos siempre re-renderizan.
+    if out.exists() and out.stat().st_size > 4096 and not layout and cues is None:
         spec = build_render_spec(moment, video)
-        cues = render.group_words(
+        cached_cues = render.group_words(
             spec.captions, spec.t_start, spec.t_end,
             max_words=settings.render_words_per_line,
             max_chars=settings.render_chars_per_line,
@@ -155,9 +176,13 @@ async def render_moment_clip(
         return ClipOut(
             moment_id=moment_id, width=render.OUT_W, height=render.OUT_H,
             duration=round(float(moment["t_end"]) - float(moment["t_start"]), 2),
-            layout=settings.render_layout, captions=len(cues),
+            layout=settings.render_layout, captions=len(cached_cues),
             size_bytes=out.stat().st_size, cached=True,
             download_url=f"/api/moments/{moment_id}/clip",
+            cues=[
+                CaptionCue(text=c.text, start=round(c.start, 3), end=round(c.end, 3))
+                for c in cached_cues
+            ],
         )
 
     spec = build_render_spec(moment, video)
@@ -170,6 +195,7 @@ async def render_moment_clip(
         show_title=bool(moment["enriched"]) and bool(moment.get("clip_title")),
         focus_x=focus_x,
         words=spec.captions,
+        cues=_cues(cues) if cues is not None else None,
         sfx=await render.plan_sfx(moment),
         music=str(moment.get("music") or ""),
         cam_layout=await cam_layout(video, moment),
@@ -188,4 +214,8 @@ async def render_moment_clip(
         captions=result.captions, size_bytes=result.size_bytes, cached=False,
         sfx=result.sfx, music=result.music, social=result.social,
         download_url=f"/api/moments/{moment_id}/clip",
+        cues=[
+            CaptionCue(text=c.text, start=round(c.start, 3), end=round(c.end, 3))
+            for c in result.cues
+        ],
     )
