@@ -88,6 +88,17 @@ directamente: comparten un proyecto de Supabase.
 
 ### Montarlo
 
+Con un [access token](https://supabase.com/dashboard/account/tokens) de la cuenta, un solo
+comando crea el proyecto, aplica el esquema y deja las claves escritas donde van:
+
+```bash
+export SUPABASE_ACCESS_TOKEN=sbp_…
+python scripts/provision_supabase.py --name clipper --region eu-west-3
+```
+
+Es repetible: con `--ref <ref>` reaplica el esquema sobre un proyecto que ya exista. El
+token no se guarda en ningún fichero. A mano son los mismos pasos:
+
 1. Crea un proyecto en [supabase.com](https://supabase.com) (el plan gratis sobra: lo que
    ocupa son los mp4, ~12 MB cada uno).
 2. SQL Editor → pega `supabase/schema.sql` y ejecútalo. Crea las dos tablas, las políticas
