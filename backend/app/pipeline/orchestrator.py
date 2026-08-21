@@ -279,11 +279,20 @@ async def run_pipeline(ctx: JobContext) -> int:
                 frames_sampled,
                 progress=lambda pct, msg: ctx.stage_progress("vision", 0.7 + 0.3 * pct, msg),
             )
+            if proposer.context.game:
+                ctx.providers["vision_game"] = proposer.context.game
         except Exception as exc:  # noqa: BLE001 - el proponente visual es opcional
             await ctx.warn(f"Analisis visual no disponible ({exc}).")
         await ctx.stage_progress(
             "vision", 1.0, f"{len(visual_hits)} momentos vistos en pantalla"
         )
+        if not visual_hits and proposer.context.game:
+            # "0 momentos" sin explicacion parece un fallo: es una respuesta legitima.
+            await ctx.warn(
+                f"Analisis visual: nada visualmente destacable en este VOD "
+                f"(juego detectado: {proposer.context.game}). Los momentos vienen del "
+                f"audio y el chat."
+            )
     else:
         reason = (
             "VISION_ENABLED=0" if not settings.vision_enabled else "sin GEMINI_API_KEY"

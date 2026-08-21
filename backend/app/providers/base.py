@@ -33,6 +33,35 @@ class Transcriber(Protocol):
 
 
 @dataclass(slots=True)
+class VisionContext:
+    """Linea base del VOD para el proponente visual: que es rutina aqui."""
+
+    game: str = ""
+    routine: list[str] = field(default_factory=list)
+    notable: list[str] = field(default_factory=list)
+
+    @property
+    def empty(self) -> bool:
+        return not (self.routine or self.notable)
+
+    def as_prompt(self) -> str:
+        if self.empty:
+            return ""
+        head = f"\n\nCONTEXTO DE ESTE DIRECTO (juego: {self.game or 'desconocido'})."
+        out = [head]
+        if self.routine:
+            out.append(
+                "Lo siguiente es RUTINA y NO se marca, aunque parezca llamativo si no "
+                "conoces el juego:\n" + "\n".join(f"- {r}" for r in self.routine)
+            )
+        if self.notable:
+            out.append(
+                "Solo seria notable algo asi:\n" + "\n".join(f"- {n}" for n in self.notable)
+            )
+        return "\n".join(out) + "\n"
+
+
+@dataclass(slots=True)
 class VisualHit:
     """Un fotograma que el proponente visual considera digno de un clip.
 

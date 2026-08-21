@@ -18,7 +18,7 @@ from pathlib import Path
 from typing import Any
 
 from ..config import settings
-from ..providers.base import ScorerUnavailable, VisualHit
+from ..providers.base import ScorerUnavailable, VisionContext, VisualHit
 from ..providers.gemini import GeminiScorer
 from ..providers.ratelimit import QuotaExhausted
 from ..utils import CommandFailed, ffmpeg_bin, log
@@ -125,6 +125,7 @@ class VisionProposer:
         self.on_warning = on_warning
         self.gemini = GeminiScorer()
         self.hits: list[VisualHit] = []
+        self.context = VisionContext()
 
     @property
     def available(self) -> bool:
@@ -141,6 +142,23 @@ class VisionProposer:
         """Devuelve los fotogramas notables, ordenados por confianza."""
         if not frames:
             return []
+
+        # Primero la linea base del VOD: sin ella el modelo marca como "inesperado"
+        # cualquier cosa que no conozca (un zombi de noche en Minecraft acaba
+        # propuesto como momento). Cuesta una sola peticion.
+        sample = frames[:: max(1, len(frames) // 8)][:8]
+        if progress:
+            await progress(0.0, "Calibrando que es rutina en este directo")
+        try:
+            self.context = await self.gemini.calibrate_vision([(f.t, f.path) for f in sample])
+            if self.context.game:
+                log.info("vision calibrada: %s", self.context.game)
+        except (QuotaExhausted, ScorerUnavailable) as exc:
+            await self._warn(
+                f"No se pudo calibrar el analisis visual ({exc}): se juzgara sin contexto "
+                f"del juego y habra mas falsos positivos."
+            )
+
         batch = max(1, settings.vision_batch)
         batches = [frames[i : i + batch] for i in range(0, len(frames), batch)]
         hits: list[VisualHit] = []
@@ -152,7 +170,9 @@ class VisionProposer:
                     f"{min(len(frames), (i + 1) * batch)} de {len(frames)}",
                 )
             try:
-                found = await self.gemini.look_at_frames([(f.t, f.path) for f in chunk])
+                found = await self.gemini.look_at_frames(
+                    [(f.t, f.path) for f in chunk], self.context
+                )
             except QuotaExhausted as exc:
                 await self._warn(f"{exc}. Se omite el resto del analisis visual.")
                 break

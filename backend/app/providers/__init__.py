@@ -6,6 +6,7 @@ from .base import (
     Transcriber,
     TranscriberUnavailable,
     Transcript,
+    VisionContext,
     VisualHit,
     Word,
 )
@@ -19,6 +20,7 @@ __all__ = [
     "Transcriber",
     "TranscriberUnavailable",
     "Transcript",
+    "VisionContext",
     "VisualHit",
     "Word",
 ]

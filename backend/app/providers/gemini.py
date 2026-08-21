@@ -12,7 +12,7 @@ import httpx
 from ..config import settings
 from ..models import CATEGORIES
 from ..utils import log
-from .base import ScoredMoment, ScorerUnavailable, VisualHit
+from .base import ScoredMoment, ScorerUnavailable, VisionContext, VisualHit
 from .ratelimit import (
     MAX_BACKOFF_ATTEMPTS,
     PACIFIC_TZ,
@@ -42,6 +42,22 @@ Devuelve SOLO un array JSON. Nada de markdown ni backticks.
 Fragmentos:
 """
 
+CALIBRATE_PROMPT = """Estos fotogramas son una muestra de un mismo directo. Dime:
+- game: que juego o actividad es
+- routine: 5-8 cosas que en ESTE directo son RUTINA y no merecen un clip. Se concreto: entidades, acciones y pantallas habituales de este juego.
+- notable: 5-8 cosas que en este juego SI serian un momento digno de clip
+Devuelve solo el JSON."""
+
+CALIBRATE_SCHEMA: dict[str, Any] = {
+    "type": "OBJECT",
+    "properties": {
+        "game": {"type": "STRING"},
+        "routine": {"type": "ARRAY", "items": {"type": "STRING"}},
+        "notable": {"type": "ARRAY", "items": {"type": "STRING"}},
+    },
+    "required": ["game", "routine", "notable"],
+}
+
 VISION_PROMPT = """Eres un editor de clips de un directo. Te doy fotogramas del VOD, cada uno precedido por su timestamp.
 
 Marca SOLO los que muestran algo que un espectador querria ver en un clip corto:
@@ -51,6 +67,8 @@ Marca SOLO los que muestran algo que un espectador querria ver en un clip corto:
 - una reaccion visible del streamer en la webcam (sorpresa, risa, susto)
 
 NO marques: juego rutinario (andar, minar, colocar bloques sueltos), menus e inventarios sin nada notable, pantallas de espera o de carga, o al streamer simplemente hablando.
+{context}
+Ante la duda, marca rutina. Es mejor no proponer nada que proponer un momento aburrido.
 
 Para cada fotograma devuelve: t (el timestamp que te doy, tal cual), notable (bool), what (que se ve, en espanol, maximo 90 caracteres), kind, confidence (0-100).
 Devuelve SOLO el array JSON."""
@@ -217,14 +235,53 @@ class GeminiScorer:
             await self._generate(body, timeout=120.0, models=self._model_chain())
         )
 
-    async def look_at_frames(self, frames: list[tuple[float, Path]]) -> list[VisualHit]:
+    async def calibrate_vision(self, frames: list[tuple[float, Path]]) -> VisionContext:
+        """Establece la linea base del VOD: que es rutina aqui y que seria notable.
+
+        Sin esto el modelo juzga cada fotograma aislado y marca como "inesperado"
+        cualquier cosa que no conozca: un zombi de noche en Minecraft acaba propuesto
+        como momento. Con la linea base del propio VOD, la precision cambia por completo.
+        """
+        if not self.configured:
+            raise ScorerUnavailable("GEMINI_API_KEY no configurada")
+        if not frames:
+            return VisionContext()
+
+        parts: list[dict[str, Any]] = [{"text": CALIBRATE_PROMPT}]
+        for _t, path in frames:
+            parts.append({"inline_data": {"mime_type": "image/jpeg",
+                                          "data": base64.b64encode(path.read_bytes()).decode("ascii")}})
+        await self.limiter.acquire(1100 * len(frames) + 600)
+        body = {
+            "contents": [{"role": "user", "parts": parts}],
+            "generationConfig": {
+                "responseMimeType": "application/json",
+                "responseSchema": CALIBRATE_SCHEMA,
+                "temperature": 0.2,
+                "maxOutputTokens": 2048,
+            },
+        }
+        data = _raw_json(await self._generate(body, timeout=180.0, models=self._model_chain()))
+        if not isinstance(data, dict):
+            return VisionContext()
+        return VisionContext(
+            game=str(data.get("game") or "").strip()[:80],
+            routine=[str(x).strip()[:140] for x in (data.get("routine") or [])][:10],
+            notable=[str(x).strip()[:140] for x in (data.get("notable") or [])][:10],
+        )
+
+    async def look_at_frames(
+        self, frames: list[tuple[float, Path]], context: VisionContext | None = None
+    ) -> list[VisualHit]:
         """Pregunta a Gemini que fotogramas muestran algo digno de un clip."""
         if not self.configured:
             raise ScorerUnavailable("GEMINI_API_KEY no configurada")
         if not frames:
             return []
 
-        parts: list[dict[str, Any]] = [{"text": VISION_PROMPT}]
+        parts: list[dict[str, Any]] = [
+            {"text": VISION_PROMPT.format(context=(context.as_prompt() if context else ""))}
+        ]
         for t, path in frames:
             parts.append({"text": f"t={t:.0f}s"})
             parts.append(
