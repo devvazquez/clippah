@@ -70,13 +70,14 @@ async def rescore(job_id: str) -> None:
     for rank, row in enumerate(scored):
         await db.execute(
             """UPDATE moments SET title=?, description=?, category=?, clip_score=?,
-                   final_score=?, hook=?, clip_title=?, sfx_fit=?, music=?, rank=?
+                   final_score=?, hook=?, clip_title=?, sfx_fit=?, music=?, rank=?,
+                   enriched=?
                WHERE id=?""",
             (
                 row["title"], row["description"], row["category"], row["clip_score"],
                 row["final_score"], row.get("hook", ""), row.get("clip_title", ""),
                 row.get("sfx_fit", "ninguno"), row.get("music", "ninguna"), rank,
-                row["id"],
+                1 if enriched else 0, row["id"],
             ),
         )
         print(
@@ -84,6 +85,9 @@ async def rescore(job_id: str) -> None:
             f"sfx={row.get('sfx_fit')} music={row.get('music')} "
             f"| {row.get('clip_title')!r}"
         )
+    await db.execute(
+        "UPDATE jobs SET enriched=? WHERE id=?", (1 if enriched else 0, job_id)
+    )
     survivors = {r["id"] for r in scored}
     dropped = [r["id"] for r in rows if r["id"] not in survivors]
     if dropped:
