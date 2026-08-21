@@ -11,14 +11,29 @@ from ..providers.base import ScoredMoment, ScorerUnavailable
 from ..providers.gemini import GeminiScorer
 from ..providers.ratelimit import QuotaExhausted
 from ..utils import hhmmss, log
-from .candidates import normalize_scores
 from .transcribe import first_words
 
 WarnCb = Callable[[str], Awaitable[None]]
 
 # Ponderacion final entre la senal medida y el juicio del LLM.
+#
+# Sin LLM, `clip_score` es el percentil del propio signal_score, asi que el reparto es
+# nominal. Con LLM hay que tener cuidado: el prompt ya recibe los mensajes de chat, los
+# usuarios distintos y el pico de audio, asi que la reaccion de la audiencia *ya esta
+# dentro* de clip_score. Sumar aparte un 40% de senal la cuenta dos veces, y el efecto
+# no es neutro: hunde justo lo que el proponente visual encuentra, que por construccion
+# tiene poca reaccion (si la tuviera, lo habrian encontrado las senales). Con el reparto
+# 0.4/0.6, el momento que el modelo puntuaba mejor como clip (55) caia al 5o puesto por
+# detras de una charla que el mismo modelo puntuaba 35.
+#
+# Con LLM, la senal se queda como desempate entre clip_scores parecidos (el modelo los
+# emite de 5 en 5), no como juez.
 W_SIGNAL = 0.4
 W_LLM = 0.6
+W_SIGNAL_ENRICHED = 0.15
+# Un candidato de vision no tiene reaccion medida: no es que la audiencia lo ignorara,
+# es que se encontro por otra via. Se le da un valor neutro en vez de su ~0 real.
+NEUTRAL_SIGNAL = 0.5
 
 
 @dataclass(slots=True)
@@ -219,15 +234,29 @@ class ScoringEngine:
 
 
 def finalize(
-    fragments: list[Fragment], scores: list[ScoredMoment]
+    fragments: list[Fragment], scores: list[ScoredMoment], *, enriched: bool = False
 ) -> list[dict[str, Any]]:
     """Combina senal y LLM, filtra falsas alarmas, ordena y recorta a TOP_N."""
-    norm = normalize_scores([f.signal_score for f in fragments])
+    # La normalizacion se hace solo sobre los candidatos de senales: incluir los de
+    # vision (con score ~0) comprimiria a todos los demas contra el techo.
+    signal_only = [f.signal_score for f in fragments if f.source != "vision"]
+    lo = min(signal_only) if signal_only else 0.0
+    hi = max(signal_only) if signal_only else 0.0
+    spread = hi - lo
+
+    w_signal = W_SIGNAL_ENRICHED if enriched else W_SIGNAL
+    w_llm = 1.0 - w_signal
     rows: list[dict[str, Any]] = []
-    for frag, score, nrm in zip(fragments, scores, norm, strict=True):
+    for frag, score in zip(fragments, scores, strict=True):
         if not score.worth_clipping:
             continue
-        final = W_SIGNAL * nrm + W_LLM * (score.clip_score / 100.0)
+        if frag.source == "vision":
+            nrm = NEUTRAL_SIGNAL
+        elif spread < 1e-9:
+            nrm = 0.5
+        else:
+            nrm = (frag.signal_score - lo) / spread
+        final = w_signal * nrm + w_llm * (score.clip_score / 100.0)
         rows.append(
             {
                 "id": frag.id,

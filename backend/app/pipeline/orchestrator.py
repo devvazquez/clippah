@@ -373,7 +373,7 @@ async def run_pipeline(ctx: JobContext) -> int:
         "Puntuando con Gemini" if scorer_provider == "gemini" else "Puntuando (modo heuristico)",
     )
     scores, enriched = await scorer.score(fragments, chat_available=chat_available)
-    rows = finalize(fragments, scores)
+    rows = finalize(fragments, scores, enriched=enriched)
     if not rows:
         # El LLM descarto todo: nos quedamos con los mejores por senal para no
         # devolver una pantalla vacia.
@@ -383,7 +383,7 @@ async def run_pipeline(ctx: JobContext) -> int:
         )
         for s in scores:
             s.worth_clipping = True
-        rows = finalize(fragments, scores)
+        rows = finalize(fragments, scores, enriched=enriched)
     await ctx.stage_progress("score", 1.0, f"{len(rows)} momentos")
 
     # ----------------------------------------------------------- 7. fotogramas

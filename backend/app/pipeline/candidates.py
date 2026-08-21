@@ -277,12 +277,3 @@ def merge_visual_hits(
     merged.sort(key=lambda c: -c.signal_score)
     return merged
 
-
-def normalize_scores(values: list[float]) -> list[float]:
-    """Min-max a [0, 1]; si todos son iguales devuelve 0.5 para no falsear el ranking."""
-    if not values:
-        return []
-    lo, hi = min(values), max(values)
-    if hi - lo < 1e-9:
-        return [0.5] * len(values)
-    return [(v - lo) / (hi - lo) for v in values]
