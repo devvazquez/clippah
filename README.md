@@ -9,8 +9,13 @@ degradado local) y mejora si las hay.
 ```
 enlace VOD → ingesta → señales (chat + audio) → candidatos
            → transcripción (solo candidatos) → puntuación LLM
-           → fotogramas → UI con lista de momentos
+           → fotogramas → render vertical → clips descargables
 ```
+
+La interfaz y el motor viven en sitios distintos y se hablan por una cola en Supabase:
+tú encolas directos desde el navegador, el backend los procesa cuando esté encendido y los
+clips aparecen en la interfaz para descargarlos. Ver
+[La interfaz y la cola](#la-interfaz-y-la-cola-supabase).
 
 > **El render está implementado**: «Generar clip» produce un mp4 **1080×1920** con los
 > subtítulos quemados a partir de los timestamps de palabra, y el botón pasa a
@@ -34,7 +39,9 @@ make setup-local              # opcional: faster-whisper para transcribir sin AP
 make dev                      # backend :8000 + frontend :3000
 ```
 
-Abre <http://localhost:3000> y pega un VOD.
+Abre <http://localhost:3000> y pega un VOD. La interfaz necesita un proyecto de Supabase
+para funcionar (es donde viven la cola y los clips): ver
+[La interfaz y la cola](#la-interfaz-y-la-cola-supabase).
 
 `make setup` copia `backend/.env.example` a `backend/.env`. **No hace falta tocarlo**: sin
 ninguna clave la app funciona igual, solo más lenta y con títulos menos ricos.
@@ -44,22 +51,96 @@ ninguna clave la app funciona igual, solo más lenta y con títulos menos ricos.
 | `make dev` | Levanta los dos servicios con un solo comando |
 | `make backend` / `make frontend` | Solo uno de los dos |
 | `make check` | `ruff check` + `tsc --noEmit` |
+| `make export` | Construye la interfaz estática en `frontend/out` |
+| `make check-queue` | Prueba el puente con Supabase contra un servidor de mentira |
 | `make doctor` | Comprueba ffmpeg/ffprobe y las dependencias |
 | `make setup-emoji` | Baja el artwork de emojis de Apple para los títulos |
 | `make clean-data` | Borra media, miniaturas y la base de datos |
 
-### Capturas
+---
 
-Pantalla de entrada: input con validación, historial y estado de proveedores.
+## La interfaz y la cola (Supabase)
 
-![Pantalla de entrada](docs/screenshot-home.png)
+El motor corre donde haya CPU y ffmpeg (una sandbox, tu portátil), y ese sitio no siempre
+está encendido. La interfaz, en cambio, tiene que estar disponible cuando te apetezca
+encolar un directo o bajarte un clip para subirlo a TikTok. Así que no se hablan
+directamente: comparten un proyecto de Supabase.
 
-Resultados: parrilla de momentos con fotograma real del VOD, timestamp, score, categoría
-y señales. Las capturas están tomadas en modo local (sin API keys), por eso los títulos
-salen del transcript y llevan el badge «Sin IA»; las miniaturas del VOD aparecen con el
-icono de placeholder porque la CDN de Twitch no era accesible desde donde se capturó.
+```
+   navegador (estático)                    Supabase                      sandbox
+ ┌──────────────────────┐        ┌───────────────────────────┐    ┌──────────────────┐
+ │ enlace + nº de clips │──────► │ clip_requests             │◄───│ worker de la cola│
+ │ cola en directo      │◄────── │  (Realtime + RLS)         │    │  ↓               │
+ │ galería de clips     │◄────── │ clips + bucket "clips"    │◄───│ pipeline + render│
+ └──────────────────────┘        └───────────────────────────┘    └──────────────────┘
+```
 
-![Parrilla de momentos](docs/screenshot-job.png)
+- **Guardar no depende de nada.** Encolar es un `INSERT`: si el backend está apagado, la
+  petición espera. Cuando arranca, coge la más antigua.
+- **El navegador va por Realtime.** Se suscribe a las dos tablas, así que el progreso del
+  análisis y los clips nuevos aparecen sin recargar ni sondear.
+- **El backend sondea cada 2 s** (`SUPABASE_POLL_S`). Un `GET` de una fila cada dos
+  segundos sale más barato en complejidad que mantener vivo un websocket de Phoenix dentro
+  del backend, y la diferencia no se nota.
+- **Los clips se sirven desde Storage** con URLs firmadas de 12 h. El botón de descarga usa
+  `?download=<nombre>`, que hace que Storage mande `Content-Disposition: attachment`: el
+  mp4 se guarda con un nombre legible en vez de abrirse en una pestaña.
+
+### Montarlo
+
+1. Crea un proyecto en [supabase.com](https://supabase.com) (el plan gratis sobra: lo que
+   ocupa son los mp4, ~12 MB cada uno).
+2. SQL Editor → pega `supabase/schema.sql` y ejecútalo. Crea las dos tablas, las políticas
+   RLS, la publicación de Realtime y el bucket `clips`. Es idempotente.
+3. Project Settings → API. Copia:
+
+   ```bash
+   # backend/.env          (la service_role NO sale de aquí)
+   SUPABASE_URL=https://xxxx.supabase.co
+   SUPABASE_SERVICE_KEY=eyJ…            # service_role
+
+   # frontend/.env.local   (estas dos acaban dentro del JavaScript)
+   NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
+   NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ…   # anon
+   ```
+
+4. `make export` → interfaz estática en `frontend/out`. `make dev` levanta el backend con
+   el worker de la cola ya en marcha; `GET /api/queue/status` dice si conectó.
+5. Opcional: `python scripts/push_clips.py` sube a Supabase los clips que ya estén
+   renderizados en disco, para que la interfaz los vea sin volver a generarlos.
+
+Sin las dos variables del backend, el worker no arranca y todo lo demás funciona igual que
+antes. Sin las dos del frontend, la interfaz lo dice en pantalla en vez de romperse.
+
+### La clave anon es pública
+
+Va incrustada en el JavaScript, así que lo que de verdad limita el acceso son las políticas
+de `supabase/schema.sql`: con esa clave se puede **leer** la cola y los clips, **encolar**
+peticiones y **cancelar** lo que aún no ha empezado. Nada más: ni borrar, ni reescribir
+resultados, ni tocar el bucket. Si publicas la interfaz en una URL que alguien pueda
+encontrar, mételes Supabase Auth y cambia `to anon` por `to authenticated`.
+
+### ¿Se puede hostear la interfaz en Supabase?
+
+**No de forma decente, y no por falta de sitio.** Supabase no ofrece hosting de frontend, y
+Storage se niega a servir HTML: sobrescribe el `Content-Type` a texto plano para no
+convertirse en alojamiento de páginas fraudulentas, y sus URLs no admiten dominio propio.
+Un `index.html` subido al bucket se descarga o se ve como texto, no se renderiza.
+
+Lo que sí funciona, por si quieres tenerlo todo en Supabase: una **Edge Function** puede
+devolver el HTML con su `Content-Type` correcto, porque es código tuyo respondiendo. Es
+viable pero incómodo — hay que empaquetar el bundle dentro de la función y desplegarlo con
+la CLI cada vez — y sigue sin darte dominio propio.
+
+Como la interfaz es un estático de verdad (`output: "export"`, sin servidor), lo cómodo es:
+
+| Dónde | Cómo |
+|---|---|
+| **Cloudflare Pages** / **Vercel** / **Netlify** | Conecta el repo, raíz `frontend`, build `npm run build`, salida `out`. Gratis y con dominio propio |
+| **GitHub Pages** | Sube `frontend/out` a la rama `gh-pages` |
+| **Tu máquina** | `make export && npx serve frontend/out` — o abrir el `index.html`, que también tira |
+
+En cualquiera de ellos, Supabase sigue siendo el backend: la interfaz no necesita más.
 
 ---
 
@@ -260,12 +341,17 @@ clipper/
 │   │   │   ├── candidates.py   fusión, picos, NMS
 │   │   │   ├── transcribe.py   Groq | faster-whisper local
 │   │   │   ├── score.py        Gemini | heurística
-│   │   │   └── frames.py       ffmpeg -ss → jpg
+│   │   │   ├── frames.py       ffmpeg -ss → jpg
+│   │   │   └── render.py       clip vertical: subtitulos, cams, sfx, musica
+│   │   ├── service.py          encolar y renderizar, sin HTTP por medio
+│   │   ├── queue.py            worker de la cola de Supabase
 │   │   └── providers/
 │   │       ├── ratelimit.py    token bucket + cuota diaria persistida
+│   │       ├── supabase.py     PostgREST + Storage sobre httpx
 │   │       ├── groq.py, gemini.py, local.py
 │   └── data/                   (gitignored) media/, thumbs/, clipper.db
-├── frontend/                   Next.js 15 · TypeScript · Tailwind
+├── frontend/                   Next.js 15 estático · habla solo con Supabase
+├── supabase/schema.sql         tablas, RLS, Realtime y bucket
 └── scripts/                    utilidades de verificación
 ```
 
@@ -294,6 +380,7 @@ Documentación interactiva en <http://127.0.0.1:8000/docs>.
 | `GET` | `/moments/{id}/clip` | Descarga el mp4 renderizado |
 | `GET` | `/moments/{id}/spec` | El `RenderSpec` del momento |
 | `GET` | `/health` | Estado de proveedores y cuota restante del día |
+| `GET` | `/queue/status` | Si el puente con Supabase está en pie y las claves valen |
 
 Eventos SSE (progreso monótono, un `id:` por evento para poder reengancharse):
 
@@ -331,6 +418,9 @@ Todo en `backend/.env` (ver `backend/.env.example`). Lo más útil:
 | `KEEP_MEDIA` | `0` | `1` conserva el WAV al terminar (útil para reanalizar) |
 | `EDGE_TRIM_S` | `60` | Segundos descartados al principio y al final |
 | `GROQ_ASD` | `28800` | Segundos de audio/día de Groq. Bájalo para probar la degradación |
+| `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | — | Activan el worker de la cola. Sin ellas, el backend va suelto |
+| `SUPABASE_BUCKET` | `clips` | Bucket donde se suben los mp4 |
+| `SUPABASE_POLL_S` | `2` | Cada cuánto pregunta el backend por peticiones nuevas |
 
 ### Cuánto tarda
 
@@ -364,6 +454,9 @@ backend/.venv/bin/python scripts/inspect_signals.py https://www.twitch.tv/videos
 
 # Alineado del chat, ventanas y ratios sobre un VOD sintetico (sin red)
 backend/.venv/bin/python scripts/check_alignment.py
+
+# El puente con Supabase entero, contra un PostgREST/Storage de mentira (sin claves)
+make check-queue
 
 # Fase 10: la cuota se agota y el pipeline degrada en lugar de fallar
 backend/.venv/bin/python scripts/check_quota_degradation.py

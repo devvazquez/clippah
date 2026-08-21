@@ -3,6 +3,7 @@
 #   make setup     instala backend (venv) y frontend (npm)
 #   make dev       levanta backend :8000 y frontend :3000
 #   make check     ruff check + tsc --noEmit
+#   make export    interfaz estatica en frontend/out (para subirla a un hosting)
 
 SHELL := /bin/bash
 PY     := python3
@@ -12,7 +13,7 @@ BACKEND_PORT ?= 8000
 FRONTEND_PORT ?= 3000
 
 .DEFAULT_GOAL := help
-.PHONY: help setup setup-backend setup-frontend setup-local dev backend frontend check lint typecheck fmt clean clean-data doctor
+.PHONY: help setup setup-backend setup-frontend setup-local dev backend frontend export check check-queue lint typecheck fmt clean clean-data doctor
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -62,7 +63,15 @@ backend: ## Solo el backend
 frontend: ## Solo el frontend
 	cd frontend && npm run dev -- --port $(FRONTEND_PORT)
 
+export: ## Construye la interfaz estatica en frontend/out
+	@test -f frontend/.env.local || { echo "FALTA frontend/.env.local con NEXT_PUBLIC_SUPABASE_URL y NEXT_PUBLIC_SUPABASE_ANON_KEY (copia frontend/.env.example)"; exit 1; }
+	cd frontend && npm run build
+	@echo "listo: frontend/out (subelo a cualquier hosting estatico)"
+
 check: lint typecheck ## ruff check + tsc --noEmit
+
+check-queue: ## Prueba el worker de la cola contra un Supabase de mentira
+	$(PYBIN)/python scripts/check_queue.py
 
 lint: ## ruff check del backend y de scripts/
 	$(PYBIN)/ruff check --config backend/pyproject.toml backend scripts

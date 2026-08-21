@@ -193,6 +193,18 @@ class Settings(BaseSettings):
     )
     render_show_social: bool = True
 
+    # --- Supabase: la cola compartida con la interfaz ---
+    # Sin estas dos, el backend funciona igual que antes y el worker de la cola no
+    # arranca. La clave es la `service_role`: se salta RLS, asi que no sale de aqui.
+    supabase_url: str = ""
+    supabase_service_key: str = ""
+    supabase_bucket: str = "clips"
+    # Cada cuanto se pregunta por peticiones nuevas. El navegador va por Realtime; este
+    # lado sondea, y dos segundos es suficiente para que se note instantaneo.
+    supabase_poll_s: float = 2.0
+    # Cuanto duran las URLs firmadas que la interfaz usa para ver y descargar.
+    supabase_signed_url_s: int = 86400
+
     # --- Hype ---
     hype_emotes: str = Field(default=DEFAULT_HYPE_EMOTES)
     hype_keywords: str = Field(default=DEFAULT_HYPE_KEYWORDS)

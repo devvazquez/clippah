@@ -149,6 +149,17 @@ class HealthOut(BaseModel):
     providers: list[ProviderHealth] = Field(default_factory=list)
 
 
+class QueueStatus(BaseModel):
+    """Estado del puente con Supabase: la cola que comparte con la interfaz."""
+
+    configured: bool = False
+    running: bool = False
+    connected: bool = False
+    detail: str = ""
+    bucket: str = ""
+    project_url: str = ""
+
+
 class ClipOut(BaseModel):
     """Resultado del render de un momento."""
 

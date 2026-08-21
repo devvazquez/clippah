@@ -16,7 +16,7 @@ from fastapi import APIRouter, FastAPI, HTTPException, Query, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, StreamingResponse
 
-from . import db
+from . import db, queue, service
 from .config import settings
 from .events import hub
 from .models import (
@@ -30,16 +30,16 @@ from .models import (
     MomentOut,
     MomentSignals,
     ProviderHealth,
+    QueueStatus,
     RenderSpec,
     VideoOut,
-    Word,
 )
-from .pipeline import frames, render, vision
-from .pipeline.ingest import ProbeFailed, UnsupportedUrl, VodTooLong, probe, resolve_url
-from .pipeline.orchestrator import new_id, runner
+from .pipeline import frames, render
+from .pipeline.orchestrator import runner
+from .providers import supabase as supabase_client
 from .providers.gemini import GeminiScorer
 from .providers.groq import GroqTranscriber
-from .utils import CommandFailed, have_faster_whisper, have_ffmpeg, have_ytdlp, log
+from .utils import have_faster_whisper, have_ffmpeg, have_ytdlp, log
 
 SSE_HEARTBEAT_S = 15.0
 
@@ -52,10 +52,12 @@ async def lifespan(app: FastAPI) -> AsyncIterator[None]:
     settings.ensure_dirs()
     await db.connect()
     await runner.start()
+    await queue.worker.start()
     log.info("clipper backend listo (data_dir=%s)", settings.data_dir.resolve())
     try:
         yield
     finally:
+        await queue.worker.stop()
         await runner.stop()
         await db.close()
 
@@ -156,33 +158,12 @@ async def _job_out(job: dict[str, Any]) -> JobOut:
 @api.post("/jobs", response_model=JobCreated, status_code=201)
 async def create_job(payload: JobCreate) -> JobCreated:
     try:
-        resolved = resolve_url(payload.url)
-    except UnsupportedUrl as exc:
+        job_id, video = await service.submit_job(payload.url)
+    except service.BadRequest as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    try:
-        info = await probe(resolved)
-    except (VodTooLong, ProbeFailed) as exc:
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
-    except Exception as exc:  # noqa: BLE001 - yt-dlp puede fallar por mil motivos
-        raise HTTPException(
-            status_code=502, detail=f"No se pudo leer el VOD: {exc}"
-        ) from exc
-
-    from .pipeline.orchestrator import _upsert_video
-
-    video_id = await _upsert_video(info)
-    job_id = new_id("job")
-    now = time.time()
-    await db.execute(
-        """INSERT INTO jobs (id, video_id, url, status, stage, progress, message,
-               created_at, updated_at)
-           VALUES (?, ?, ?, 'queued', 'queued', 0, 'En cola', ?, ?)""",
-        (job_id, video_id, info.url, now, now),
-    )
-    await hub.publish(job_id, {"stage": "queued", "progress": 0.0, "message": "En cola"})
-    await runner.submit(job_id)
-    video_row = db.row_to_dict(await db.fetch_one("SELECT * FROM videos WHERE id=?", (video_id,)))
-    return JobCreated(job_id=job_id, video=_video_out(video_row))
+    except service.Unavailable as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return JobCreated(job_id=job_id, video=_video_out(video))
 
 
 @api.get("/jobs", response_model=JobList)
@@ -367,122 +348,19 @@ async def moment_thumbnail(moment_id: str) -> FileResponse:
     )
 
 
-def _build_render_spec(moment: dict[str, Any], video: dict[str, Any]) -> RenderSpec:
-    words = db.loads(moment.get("words"), []) or []
-    return RenderSpec(
-        moment_id=str(moment["id"]),
-        source_url=str(video.get("url") or ""),
-        t_start=float(moment["t_start"]),
-        t_end=float(moment["t_end"]),
-        aspect="9:16",
-        title=str(moment["title"]),
-        # Los timestamps que se guardan ya son absolutos respecto al VOD.
-        captions=[
-            Word(text=str(w.get("text") or ""), start=float(w.get("start") or 0.0),
-                 end=float(w.get("end") or 0.0))
-            for w in words
-        ],
-        sfx_cues=[],
-    )
-
-
-async def _clip_source(video: dict[str, Any]) -> str:
-    """Fichero local si lo hay; si no, la URL del stream (re-resolviendola si caduco)."""
-    local = video.get("video_path")
-    if local and Path(str(local)).exists():
-        return str(local)
-    url = str(video.get("stream_url") or "")
-    expires = float(video.get("stream_url_expires_at") or 0.0)
-    if not url or (expires and expires < time.time()):
-        url = await frames._refresh_stream_url(video)
-    if not url:
-        raise HTTPException(
-            status_code=503,
-            detail="No hay fuente de video para renderizar: no se pudo resolver el stream",
-        )
-    return url
-
-
-async def _cam_layout(
-    video: dict[str, Any], moment: dict[str, Any]
-) -> dict[str, list[float]] | None:
-    """Rectangulos de las webcams del VOD, detectandolos si aun no se sabian."""
-    saved = db.loads(video.get("cam_layout"), None)
-    if saved:
-        return saved
-    source = str(video.get("video_path") or "") or await _clip_source(video)
-    layout = await vision.probe_cam_layout(source, float(moment["t_start"]))
-    if layout:
-        await db.execute(
-            "UPDATE videos SET cam_layout=? WHERE id=?", (db.dumps(layout), video["id"])
-        )
-    return layout
-
-
 @api.post("/moments/{moment_id}/render", response_model=ClipOut)
 async def render_moment(
     moment_id: str,
-    layout: str = Query("", description="blur | crop | split (vacio = el de config)"),
+    layout: str = Query("", description="cams | blur | crop | split (vacio = el de config)"),
     focus_x: float = Query(0.5, ge=0.0, le=1.0),
 ) -> ClipOut:
     """Renderiza el clip vertical 9:16 con subtitulos quemados."""
-    row = await db.fetch_one("SELECT * FROM moments WHERE id=?", (moment_id,))
-    if row is None:
-        raise HTTPException(status_code=404, detail="Momento no encontrado")
-    moment = db.row_to_dict(row)
-    video = db.row_to_dict(
-        await db.fetch_one("SELECT * FROM videos WHERE id=?", (moment["video_id"],))
-    )
-    spec = _build_render_spec(moment, video)
-    spec.sfx_cues = await render.plan_sfx(moment)
-
-    out = render.clip_path(moment_id)
-    cached = out.exists() and out.stat().st_size > 4096 and not layout
-    if not cached:
-        source = await _clip_source(video)
-        opts = render.RenderOptions(
-            layout=layout,
-            # El titulo quemado es el `clip_title` del LLM; sin IA no se quema nada,
-            # porque seria las primeras palabras del transcript.
-            title=str(moment.get("clip_title") or ""),
-            show_title=bool(moment["enriched"]) and bool(moment.get("clip_title")),
-            focus_x=focus_x,
-            words=spec.captions,
-            sfx=await render.plan_sfx(moment),
-            music=str(moment.get("music") or ""),
-            cam_layout=await _cam_layout(video, moment),
-        )
-        try:
-            result = await render.render_clip(source, moment, opts, out=out)
-        except CommandFailed as exc:
-            log.exception("render de %s fallo", moment_id)
-            raise HTTPException(
-                status_code=500, detail=f"El render fallo: {exc}"
-            ) from exc
-        await db.execute(
-            "UPDATE moments SET clip_path=? WHERE id=?", (str(result.path), moment_id)
-        )
-        return ClipOut(
-            moment_id=moment_id, width=result.width, height=result.height,
-            duration=round(result.duration, 2), layout=result.layout,
-            captions=result.captions, size_bytes=result.size_bytes, cached=False,
-            sfx=result.sfx, music=result.music, social=result.social,
-            download_url=f"/api/moments/{moment_id}/clip",
-        )
-
-    # `captions` son lineas de subtitulo, no palabras: se agrupan igual que al renderizar.
-    cues = render.group_words(
-        spec.captions, spec.t_start, spec.t_end,
-        max_words=settings.render_words_per_line,
-        max_chars=settings.render_chars_per_line,
-    )
-    return ClipOut(
-        moment_id=moment_id, width=render.OUT_W, height=render.OUT_H,
-        duration=round(float(moment["t_end"]) - float(moment["t_start"]), 2),
-        layout=settings.render_layout, captions=len(cues),
-        size_bytes=out.stat().st_size, cached=True,
-        download_url=f"/api/moments/{moment_id}/clip",
-    )
+    try:
+        return await service.render_moment_clip(moment_id, layout=layout, focus_x=focus_x)
+    except service.NotFound as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except service.Unavailable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @api.get("/moments/{moment_id}/clip")
@@ -514,7 +392,22 @@ async def moment_spec(moment_id: str) -> RenderSpec:
     video = db.row_to_dict(
         await db.fetch_one("SELECT * FROM videos WHERE id=?", (moment["video_id"],))
     )
-    return _build_render_spec(moment, video)
+    return service.build_render_spec(moment, video)
+
+
+@api.get("/queue/status", response_model=QueueStatus)
+async def queue_status() -> QueueStatus:
+    """Si el puente con Supabase esta en pie (y si las claves valen)."""
+    configured = supabase_client.configured()
+    connected, detail = await supabase_client.health()
+    return QueueStatus(
+        configured=configured,
+        running=queue.worker.running,
+        connected=connected,
+        detail=queue.worker.last_error or detail,
+        bucket=settings.supabase_bucket,
+        project_url=settings.supabase_url,
+    )
 
 
 @api.get("/health", response_model=HealthOut)
