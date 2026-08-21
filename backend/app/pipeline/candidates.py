@@ -7,6 +7,7 @@ from dataclasses import dataclass
 import numpy as np
 
 from ..config import settings
+from ..providers.base import VisualHit
 from ..utils import log
 from .signals import SignalSet
 
@@ -30,6 +31,11 @@ class Candidate:
     msg_count: int
     chat_ratio: float
     combo: bool
+    # De donde sale el candidato: "signals" (reaccion de audio/chat) o "vision" (lo que
+    # se ve en pantalla). Un hito visual silencioso solo puede venir del segundo.
+    source: str = "signals"
+    vision_note: str = ""
+    vision_kind: str = ""
 
 
 def shift_earlier(x: np.ndarray, seconds: float, bin_seconds: float) -> np.ndarray:
@@ -176,40 +182,100 @@ def select_candidates(signals: SignalSet, *, min_wanted: int = 5) -> list[Candid
             break
 
     peaks = trim_to_limit(peaks, score, settings.max_candidates)
-    out: list[Candidate] = []
-    for idx in peaks:
-        t_peak = signals.bin_time(idx)
-        # Ventana asimetrica: el evento ocurre *antes* del pico de reaccion.
-        t_start = max(0.0, t_peak - settings.window_before_s)
-        t_end = min(signals.duration, t_peak + settings.window_after_s)
-        if t_end - t_start < settings.min_clip_s:
-            t_end = min(signals.duration, t_start + settings.min_clip_s)
-        lo = signals.index_at(max(0.0, t_peak - settings.combo_window_s))
-        hi = signals.index_at(min(signals.duration, t_peak + settings.combo_window_s)) + 1
-        msgs = float(signals.msg_count[lo:hi].sum()) if hi > lo else 0.0
-        base = (
-            float(signals.msg_baseline[lo:hi].sum())
-            if hi > lo and signals.msg_baseline.size
-            else 0.0
-        )
-        ratio = msgs / base if base >= 0.5 else 0.0
-        out.append(
-            Candidate(
-                t_peak=t_peak,
-                t_start=t_start,
-                t_end=t_end,
-                signal_score=float(score[idx]),
-                # El z de chat que se reporta es el alineado: es el que decidio el pico.
-                chat_z=float(z_chat_aligned[idx]),
-                audio_z=float(signals.z_audio[idx]),
-                unique_users=int(signals.unique_users[lo:hi].max() if hi > lo else 0),
-                msg_count=int(msgs),
-                chat_ratio=round(ratio, 2),
-                combo=bool(combo[idx]),
-            )
-        )
+    # Ventana asimetrica: el evento ocurre *antes* del pico de reaccion. El z de chat que
+    # se reporta es el alineado, que es el que decidio el pico.
+    out = [
+        _candidate_at(signals, signals.bin_time(idx), score, combo, z_chat_aligned)
+        for idx in peaks
+    ]
     out.sort(key=lambda c: -c.signal_score)
     return out
+
+
+def _candidate_at(
+    signals: SignalSet,
+    t_peak: float,
+    score: np.ndarray,
+    combo: np.ndarray,
+    z_chat_aligned: np.ndarray,
+    *,
+    source: str = "signals",
+    vision_note: str = "",
+    vision_kind: str = "",
+) -> Candidate:
+    """Construye un candidato centrado en `t_peak` leyendo las senales de ese instante."""
+    idx = signals.index_at(t_peak)
+    t_start = max(0.0, t_peak - settings.window_before_s)
+    t_end = min(signals.duration, t_peak + settings.window_after_s)
+    if t_end - t_start < settings.min_clip_s:
+        t_end = min(signals.duration, t_start + settings.min_clip_s)
+    lo = signals.index_at(max(0.0, t_peak - settings.combo_window_s))
+    hi = signals.index_at(min(signals.duration, t_peak + settings.combo_window_s)) + 1
+    msgs = float(signals.msg_count[lo:hi].sum()) if hi > lo else 0.0
+    base = (
+        float(signals.msg_baseline[lo:hi].sum())
+        if hi > lo and signals.msg_baseline.size
+        else 0.0
+    )
+    return Candidate(
+        t_peak=t_peak,
+        t_start=t_start,
+        t_end=t_end,
+        signal_score=float(score[idx]),
+        chat_z=float(z_chat_aligned[idx]),
+        audio_z=float(signals.z_audio[idx]),
+        unique_users=int(signals.unique_users[lo:hi].max() if hi > lo else 0),
+        msg_count=int(msgs),
+        chat_ratio=round(msgs / base, 2) if base >= 0.5 else 0.0,
+        combo=bool(combo[idx]),
+        source=source,
+        vision_note=vision_note,
+        vision_kind=vision_kind,
+    )
+
+
+def merge_visual_hits(
+    signal_cands: list[Candidate], hits: list[VisualHit], signals: SignalSet
+) -> list[Candidate]:
+    """Fusiona los candidatos de senales con los propuestos por vision.
+
+    El fotograma llega con una granularidad gruesa (VISION_SAMPLE_S), asi que el pico se
+    afina localmente: dentro de la ventana del fotograma se busca el maximo del score de
+    senales. Si ahi no hay nada, se queda el instante del fotograma. Despues se aplica el
+    mismo NMS que a los picos, de forma que un momento que ya habian encontrado las
+    senales no se duplique (gana el de senales, que trae el score medido).
+    """
+    if not hits:
+        return signal_cands
+
+    score, combo, z_chat_aligned = fuse(signals)
+    half = settings.vision_sample_s
+    min_gap = settings.min_gap_s
+    merged = list(signal_cands)
+    added = 0
+
+    for hit in hits:
+        # El evento puede haber empezado antes del fotograma que lo delata.
+        lo = signals.index_at(max(0.0, hit.t - half))
+        hi = signals.index_at(min(signals.duration, hit.t + half / 2)) + 1
+        t_peak = hit.t
+        if hi > lo:
+            window = score[lo:hi]
+            if float(window.max()) > 0:
+                t_peak = signals.bin_time(lo + int(np.argmax(window)))
+        if any(abs(c.t_peak - t_peak) < min_gap for c in merged):
+            log.debug("hit visual en %.0fs ya cubierto por las senales", hit.t)
+            continue
+        merged.append(
+            _candidate_at(
+                signals, t_peak, score, combo, z_chat_aligned,
+                source="vision", vision_note=hit.what, vision_kind=hit.kind,
+            )
+        )
+        added += 1
+    log.info("vision aporto %d candidatos nuevos de %d propuestos", added, len(hits))
+    merged.sort(key=lambda c: -c.signal_score)
+    return merged
 
 
 def normalize_scores(values: list[float]) -> list[float]:

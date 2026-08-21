@@ -12,7 +12,12 @@ type Sort = "score" | "chrono";
 export function MomentGrid({ moments, video }: { moments: Moment[]; video: Video | null }) {
   const [filter, setFilter] = useState<Category | "all">("all");
   const [sort, setSort] = useState<Sort>("score");
+  const [onlyVision, setOnlyVision] = useState(false);
   const [preview, setPreview] = useState<Moment | null>(null);
+  const visionCount = useMemo(
+    () => moments.filter((m) => m.source === "vision").length,
+    [moments],
+  );
 
   const categories = useMemo(() => {
     const counts = new Map<Category, number>();
@@ -21,11 +26,12 @@ export function MomentGrid({ moments, video }: { moments: Moment[]; video: Video
   }, [moments]);
 
   const visible = useMemo(() => {
-    const list = filter === "all" ? moments : moments.filter((m) => m.category === filter);
+    let list = filter === "all" ? moments : moments.filter((m) => m.category === filter);
+    if (onlyVision) list = list.filter((m) => m.source === "vision");
     return [...list].sort((a, b) =>
       sort === "score" ? b.final_score - a.final_score : a.t_start - b.t_start,
     );
-  }, [moments, filter, sort]);
+  }, [moments, filter, sort, onlyVision]);
 
   return (
     <div className="space-y-3">
@@ -45,7 +51,12 @@ export function MomentGrid({ moments, video }: { moments: Moment[]; video: Video
           ))}
         </div>
         <div className="flex items-center gap-1">
-          <span className="mr-1 text-[11px] text-ink-faint">orden</span>
+          {visionCount > 0 ? (
+            <Chip active={onlyVision} onClick={() => setOnlyVision((v) => !v)}>
+              solo visión <span className="tnum text-ink-faint">{visionCount}</span>
+            </Chip>
+          ) : null}
+          <span className="ml-2 mr-1 text-[11px] text-ink-faint">orden</span>
           <Button
             variant={sort === "score" ? "subtle" : "ghost"}
             size="sm"

@@ -34,6 +34,9 @@ export type Moment = {
   transcript: string;
   enriched: boolean;
   thumbnail_url: string;
+  /** "signals" = lo encontró la reacción de audio/chat; "vision" = lo vio en pantalla. */
+  source: "signals" | "vision";
+  vision_note: string;
 };
 
 export type Video = {
@@ -102,6 +105,7 @@ export type Health = {
   faster_whisper: boolean;
   transcriber: string;
   scorer: string;
+  vision: boolean;
   providers: ProviderHealth[];
 };
 
@@ -210,6 +214,7 @@ export const STAGE_LABELS: Record<string, string> = {
   candidates: "Candidatos",
   transcribe: "Transcripción",
   score: "Puntuación",
+  vision: "Visión",
   frames: "Fotogramas",
   done: "Listo",
   error: "Error",

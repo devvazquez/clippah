@@ -3,6 +3,7 @@
 import {
   ChevronDown,
   ChevronUp,
+  Eye,
   MessageSquare,
   Play,
   Scissors,
@@ -82,6 +83,18 @@ export function MomentCard({
         <span className="pointer-events-none absolute bottom-1.5 left-1.5 rounded bg-black/80 px-1.5 py-0.5 text-[11px] text-ink-dim tnum">
           {Math.round(moment.duration)}s
         </span>
+        {moment.source === "vision" ? (
+          <span
+            className="pointer-events-none absolute left-1.5 top-1.5 flex items-center gap-1 rounded bg-accent/90 px-1.5 py-0.5 text-[11px] font-medium text-white"
+            title={
+              moment.vision_note
+                ? `Detectado mirando la pantalla: ${moment.vision_note}`
+                : "Detectado mirando la pantalla, no por la reacción del chat o el audio"
+            }
+          >
+            <Eye className="h-3 w-3" /> visión
+          </span>
+        ) : null}
       </div>
 
       <div className="flex flex-1 flex-col gap-1.5 p-3">

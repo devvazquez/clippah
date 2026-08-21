@@ -113,9 +113,24 @@ class Settings(BaseSettings):
     gemini_rpm: int = 15
     gemini_rpd: int = 1000
     gemini_tpm: int = 250_000
-    gemini_model: str = "gemini-2.5-flash-lite"
-    gemini_fallback_model: str = "gemini-2.5-flash"
+    # Los alias `-latest` evitan que un modelo retirado rompa la app: `gemini-2.5-flash-lite`
+    # dejo de estar disponible para cuentas nuevas y devuelve 404.
+    gemini_model: str = "gemini-flash-lite-latest"
+    gemini_fallback_model: str = "gemini-flash-latest"
     gemini_batch_size: int = 10
+
+    # --- Vision (proponente visual) ---
+    # Las senales de audio y chat solo encuentran momentos con *reaccion*. Un hito
+    # visual silencioso (equipo raro conseguido, construccion acabada) no levanta el
+    # audio ni el chat, asi que nunca llega a ser candidato. Este proponente mira la
+    # pantalla: muestrea fotogramas y le pregunta a Gemini cuales muestran algo.
+    vision_enabled: bool = True          # requiere GEMINI_API_KEY; si no, se desactiva
+    vision_sample_s: float = 20.0        # un fotograma cada N segundos
+    vision_frame_width: int = 512
+    vision_batch: int = 15               # fotogramas por peticion
+    vision_min_confidence: float = 60.0
+    vision_max_hits: int = 12            # candidatos visuales aceptados como maximo
+    vision_model: str = ""               # vacio = usa gemini_model
 
     # --- Hype ---
     hype_emotes: str = Field(default=DEFAULT_HYPE_EMOTES)

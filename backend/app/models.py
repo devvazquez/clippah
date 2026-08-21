@@ -68,6 +68,9 @@ class MomentOut(BaseModel):
     transcript: str
     enriched: bool
     thumbnail_url: str
+    # "signals" = lo encontro la reaccion de audio/chat; "vision" = lo vio en pantalla.
+    source: Literal["signals", "vision"] = "signals"
+    vision_note: str = ""
 
 
 class JobOut(BaseModel):
@@ -136,6 +139,7 @@ class HealthOut(BaseModel):
     faster_whisper: bool = False
     transcriber: str = "none"
     scorer: str = "heuristic"
+    vision: bool = False
     providers: list[ProviderHealth] = Field(default_factory=list)
 
 

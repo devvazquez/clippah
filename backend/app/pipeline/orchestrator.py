@@ -16,7 +16,7 @@ from ..events import hub
 from ..models import CATEGORIES
 from ..utils import hhmmss, log
 from . import frames
-from .candidates import Candidate, select_candidates
+from .candidates import Candidate, merge_visual_hits, select_candidates
 from .chat import ChatMessage, ChatUnavailable, fetch_chat, fetch_twitch_chat_via_cli
 from .ingest import (
     ProbeFailed,
@@ -31,14 +31,16 @@ from .ingest import (
 from .score import Fragment, ScoringEngine, finalize
 from .signals import compute_signals
 from .transcribe import TranscriptionEngine, refine_bounds
+from .vision import VisionProposer, sample_frames
 
 # Reparto del progreso por etapa (limites superiores).
 STAGE_BOUNDS = {
-    "ingest": (0.02, 0.30),
-    "chat": (0.30, 0.45),
-    "signals": (0.45, 0.50),
-    "candidates": (0.50, 0.52),
-    "transcribe": (0.52, 0.85),
+    "ingest": (0.02, 0.25),
+    "chat": (0.25, 0.38),
+    "signals": (0.38, 0.42),
+    "vision": (0.42, 0.60),
+    "candidates": (0.60, 0.62),
+    "transcribe": (0.62, 0.85),
     "score": (0.85, 0.92),
     "frames": (0.92, 0.99),
 }
@@ -260,11 +262,45 @@ async def run_pipeline(ctx: JobContext) -> int:
         raise RuntimeError("Sin audio analizable ni chat: no hay nada que puntuar")
     await ctx.stage_progress("signals", 1.0, "Senales calculadas")
 
-    # ------------------------------------------------------------- 4. candidatos
+    # ------------------------------------------------ 4. proponente visual (opcional)
+    video_row = db.row_to_dict(await db.fetch_one("SELECT * FROM videos WHERE id=?", (video_id,)))
+    visual_hits = []
+    proposer = VisionProposer(on_warning=ctx.warn)
+    if proposer.available:
+        ctx.providers["vision"] = "gemini"
+        try:
+            frames_sampled = await sample_frames(
+                video_row,
+                every_s=settings.vision_sample_s,
+                width=settings.vision_frame_width,
+                progress=lambda pct, msg: ctx.stage_progress("vision", 0.7 * pct, msg),
+            )
+            visual_hits = await proposer.propose(
+                frames_sampled,
+                progress=lambda pct, msg: ctx.stage_progress("vision", 0.7 + 0.3 * pct, msg),
+            )
+        except Exception as exc:  # noqa: BLE001 - el proponente visual es opcional
+            await ctx.warn(f"Analisis visual no disponible ({exc}).")
+        await ctx.stage_progress(
+            "vision", 1.0, f"{len(visual_hits)} momentos vistos en pantalla"
+        )
+    else:
+        reason = (
+            "VISION_ENABLED=0" if not settings.vision_enabled else "sin GEMINI_API_KEY"
+        )
+        log.info("proponente visual desactivado (%s)", reason)
+
+    # ------------------------------------------------------------- 5. candidatos
     cands: list[Candidate] = select_candidates(signals)
+    if visual_hits:
+        cands = merge_visual_hits(cands, visual_hits, signals)
     if not cands:
         raise RuntimeError("No se encontro ningun pico de actividad en este VOD")
-    await ctx.stage_progress("candidates", 1.0, f"{len(cands)} candidatos")
+    from_vision = sum(1 for c in cands if c.source == "vision")
+    detail = f"{len(cands)} candidatos"
+    if from_vision:
+        detail += f" ({from_vision} de pantalla)"
+    await ctx.stage_progress("candidates", 1.0, detail)
 
     # ---------------------------------------------------------- 5. transcripcion
     transcriber = TranscriptionEngine(on_warning=ctx.warn)
@@ -307,6 +343,9 @@ async def run_pipeline(ctx: JobContext) -> int:
                     msg_count=cand.msg_count,
                     combo=cand.combo,
                     chat_ratio=cand.chat_ratio,
+                    source=cand.source,
+                    vision_note=cand.vision_note,
+                    vision_kind=cand.vision_kind,
                     transcript=text,
                     language=transcript.language,
                     words=words,
@@ -346,8 +385,8 @@ async def run_pipeline(ctx: JobContext) -> int:
             """INSERT INTO moments (id, job_id, video_id, t_start, t_end, t_peak, title,
                    description, category, final_score, signal_score, clip_score, chat_z,
                    audio_z, unique_users, msg_count, combo, transcript, words, language,
-                   enriched, rank, created_at)
-               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                   enriched, rank, created_at, source, vision_note)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (
                 row["id"], ctx.job_id, video_id, row["t_start"], row["t_end"], row["t_peak"],
                 row["title"], row["description"],
@@ -356,6 +395,7 @@ async def run_pipeline(ctx: JobContext) -> int:
                 row["audio_z"], row["unique_users"], row["msg_count"],
                 1 if row["combo"] else 0, row["transcript"], db.dumps(row["words"]),
                 row["language"], 1 if enriched else 0, rank, now,
+                row.get("source", "signals"), row.get("vision_note", ""),
             ),
         )
 

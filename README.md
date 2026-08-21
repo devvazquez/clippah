@@ -67,12 +67,15 @@ icono de placeholder porque la CDN de Twitch no era accesible desde donde se cap
 El backend elige proveedor automáticamente y **degrada en lugar de fallar**: un job
 siempre termina con resultados.
 
-| | Transcripción | Títulos y puntuación | Aviso en la UI |
-|---|---|---|---|
-| Sin claves | `faster-whisper` local, o ninguna si no está instalado | heurística sobre las señales | ámbar «Modo local (sin API keys) — más lento» |
-| `GROQ_API_KEY` | Groq `whisper-large-v3-turbo` | heurística | — |
-| `GEMINI_API_KEY` | local | Gemini `gemini-2.5-flash-lite` | — |
-| Las dos | Groq | Gemini | verde «Groq + Gemini» |
+| | Transcripción | Títulos y puntuación | Momentos visuales | Aviso en la UI |
+|---|---|---|---|---|
+| Sin claves | `faster-whisper` local, o ninguna si no está instalado | heurística sobre las señales | no | ámbar «Modo local (sin API keys) — más lento» |
+| `GROQ_API_KEY` | Groq `whisper-large-v3-turbo` | heurística | no | — |
+| `GEMINI_API_KEY` | local | Gemini | **sí** | — |
+| Las dos | Groq | Gemini | **sí** | verde «Groq + Gemini» |
+
+Los momentos que vienen del proponente visual llevan un badge **visión** en la tarjeta y
+se pueden filtrar con el chip «solo visión».
 
 Cuando una cuota se agota, el pipeline emite un evento `warning`, cae al proveedor local y
 **termina con resultados**. El aviso se ve en la pantalla del job.
@@ -113,6 +116,29 @@ Además: `unique_users` por bin (más robusto frente al spam de un solo usuario)
 non-maximum suppression con `MIN_GAP_S = 45`, descarte de los primeros y últimos 60 s
 (pantallas de «starting soon») y exclusión de los tramos muteados por copyright del cálculo
 del baseline.
+
+**5. Un segundo proponente: mirar la pantalla.** Audio y chat solo encuentran momentos
+con *reacción*. Un hito visual silencioso — equipo raro conseguido, construcción
+terminada, un marcador alto — no levanta el audio ni el chat, así que nunca llega a ser
+candidato, y el LLM no lo ve nunca porque solo filtra lo que las señales proponen.
+
+Con `GEMINI_API_KEY` se activa un proponente visual: una sola pasada de ffmpeg muestrea
+un fotograma cada `VISION_SAMPLE_S` (20 s por defecto) a 512 px, y Gemini juzga los
+fotogramas en lotes con salida JSON forzada (`notable`, `what`, `kind`, `confidence`).
+Cada acierto se afina buscando el máximo local de la señal de audio en su ventana — el
+evento suele empezar antes del fotograma que lo delata — y pasa por el mismo NMS que los
+picos, así que un momento que las señales ya habían encontrado no se duplica.
+
+> **La visión propone, no titula.** Gemini ve un fotograma sin audio ni contexto y se
+> equivoca en la semántica del juego: en las pruebas llamó «criatura robótica hostil» al
+> compañero de partida. Por eso su descripción entra en el prompt de puntuación como
+> *pista*, con instrucción explícita de que el transcript manda si la contradice. Solo
+> se usa como título cuando no hay LLM que redacte.
+
+Una pasada de ffmpeg cuesta lo mismo con 1 fotograma cada 20 s que cada 5: lo que se
+paga es recorrer el vídeo (~6 min por cada 30 min de VOD). Los fotogramas se cachean, así
+que reanalizar es gratis. Coste en tokens: ~1.100 por fotograma, unos 110.000 para un VOD
+de 33 min. Se desactiva con `VISION_ENABLED=0`.
 
 ### Solo se transcriben los candidatos
 
@@ -208,6 +234,10 @@ Todo en `backend/.env` (ver `backend/.env.example`). Lo más útil:
 | `MIN_CLIP_S` / `MAX_CLIP_S` | `12` / `60` | Duración del clip tras refinar bordes |
 | `WHISPER_MODEL` | `large-v3-turbo` | `small` o `medium` para máquinas modestas |
 | `YTDLP_COOKIES_FROM_BROWSER` | — | `firefox`/`chrome`/… si YouTube pide verificación anti-bot |
+| `VISION_ENABLED` | `1` | Proponente visual (necesita `GEMINI_API_KEY`) |
+| `VISION_SAMPLE_S` | `20` | Un fotograma cada N s. Bajarlo no acelera ni encarece el muestreo, solo el coste en tokens |
+| `VISION_MAX_HITS` | `12` | Candidatos visuales aceptados como máximo |
+| `GEMINI_MODEL` | `gemini-flash-lite-latest` | Alias `-latest` a propósito: `gemini-2.5-flash-lite` ya devuelve 404 para cuentas nuevas |
 | `KEEP_MEDIA` | `0` | `1` conserva el WAV al terminar (útil para reanalizar) |
 | `EDGE_TRIM_S` | `60` | Segundos descartados al principio y al final |
 | `GROQ_ASD` | `28800` | Segundos de audio/día de Groq. Bájalo para probar la degradación |
@@ -279,6 +309,10 @@ local») y el job terminará con momentos.
 - **El chat replay de Twitch se pagina por `contentOffsetSeconds`, no por cursor.** La
   paginación por cursor dispara el reto de integridad KPSDK en la segunda petición y
   necesitaría un navegador real. Por offset no lo dispara.
+- **`gemini-2.5-flash-lite` está retirado para cuentas nuevas** y devuelve 404 con el
+  mensaje de que uses un modelo más reciente. Por eso los defaults son los alias
+  `-latest`, que no se quedan obsoletos. Un `503 high demand` de un modelo concreto
+  también es normal: se reintenta y se cae al siguiente de la cadena.
 - **`ffmpeg -ss` va antes de `-i`.** Al revés decodifica el fichero entero desde el
   principio y tarda minutos en un VOD largo.
 - **Las URLs HLS de Twitch caducan** (token de ~24 h). Se guarda `stream_url_expires_at`;

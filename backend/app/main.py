@@ -112,6 +112,8 @@ def _moment_out(row: dict[str, Any]) -> MomentOut:
         transcript=str(row["transcript"] or ""),
         enriched=bool(row["enriched"]),
         thumbnail_url=f"/api/moments/{row['id']}/thumbnail",
+        source=row.get("source") or "signals",
+        vision_note=str(row.get("vision_note") or ""),
     )
 
 
@@ -447,8 +449,10 @@ async def health() -> HealthOut:
     else:
         mode = "local"
     transcriber = "groq" if groq.configured else ("local" if fw else "none")
+    vision = settings.vision_enabled and gemini.configured
     return HealthOut(
         mode=mode,
+        vision=vision,
         ffmpeg=have_ffmpeg(),
         ytdlp=have_ytdlp(),
         faster_whisper=fw,

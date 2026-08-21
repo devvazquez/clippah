@@ -36,6 +36,9 @@ class Fragment:
     msg_count: int
     combo: bool
     chat_ratio: float = 0.0
+    source: str = "signals"
+    vision_note: str = ""
+    vision_kind: str = ""
     transcript: str = ""
     language: str = ""
     words: list[dict[str, Any]] = field(default_factory=list)
@@ -45,7 +48,7 @@ class Fragment:
         return max(0.0, self.t_end - self.t_start)
 
     def to_prompt_dict(self) -> dict[str, Any]:
-        return {
+        d: dict[str, Any] = {
             "id": self.id,
             "timestamp": hhmmss(self.t_peak),
             "duration": self.duration,
@@ -55,9 +58,23 @@ class Fragment:
             "audio_z": self.audio_z,
             "transcript": self.transcript,
         }
+        if self.vision_note:
+            d["visto_en_pantalla"] = self.vision_note
+            d["propuesto_por"] = "vision"
+        return d
+
+
+VISION_KIND_TO_CATEGORY = {
+    "logro": "habilidad",
+    "peligro": "fail",
+    "inesperado": "reaccion",
+    "reaccion": "reaccion",
+}
 
 
 def guess_category(text: str, fragment: Fragment) -> str:
+    if fragment.vision_kind in VISION_KIND_TO_CATEGORY:
+        return VISION_KIND_TO_CATEGORY[fragment.vision_kind]
     low = (text or "").lower()
     best, best_hits = "otro", 0
     for category, keywords in CATEGORY_KEYWORDS.items():
@@ -80,8 +97,10 @@ def heuristic_scores(fragments: list[Fragment], *, chat_available: bool) -> list
     pct = _percentiles(raw)
     out: list[ScoredMoment] = []
     for frag, p in zip(fragments, pct, strict=True):
+        # Sin LLM que redacte, la pista visual es mejor titulo que las primeras
+        # palabras del transcript (y desde luego mejor que "Momento a 41:25").
         head = first_words(frag.transcript, 8)
-        title = head or f"Momento a {hhmmss(frag.t_peak)}"
+        title = frag.vision_note or head or f"Momento a {hhmmss(frag.t_peak)}"
         # Con 1-2 mensajes no hay "pico de actividad" que describir: manda el audio.
         chat_is_signal = chat_available and frag.msg_count >= 3
         if chat_is_signal:
@@ -103,6 +122,8 @@ def heuristic_scores(fragments: list[Fragment], *, chat_available: bool) -> list
             description += (
                 f" {msgs} mensaje{'s' if msgs != 1 else ''} de chat en la ventana."
             )
+        if frag.source == "vision" and frag.vision_note:
+            description = f"Detectado en pantalla: {frag.vision_note}. {description}"
         if frag.combo:
             description += " Coinciden pico de audio y pico de chat."
         out.append(
@@ -226,6 +247,8 @@ def finalize(
                 "transcript": frag.transcript,
                 "words": frag.words,
                 "language": frag.language,
+                "source": frag.source,
+                "vision_note": frag.vision_note,
             }
         )
     rows.sort(key=lambda r: -r["final_score"])

@@ -6,6 +6,7 @@ from .base import (
     Transcriber,
     TranscriberUnavailable,
     Transcript,
+    VisualHit,
     Word,
 )
 from .ratelimit import QuotaExhausted, RateLimiter
@@ -18,5 +19,6 @@ __all__ = [
     "Transcriber",
     "TranscriberUnavailable",
     "Transcript",
+    "VisualHit",
     "Word",
 ]

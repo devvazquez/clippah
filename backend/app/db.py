@@ -11,7 +11,7 @@ import aiosqlite
 
 from .config import settings
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS videos (
@@ -94,6 +94,8 @@ CREATE TABLE IF NOT EXISTS moments (
     language      TEXT,
     enriched      INTEGER NOT NULL DEFAULT 0,
     thumb_path    TEXT,
+    source        TEXT NOT NULL DEFAULT 'signals',   -- signals | vision
+    vision_note   TEXT NOT NULL DEFAULT '',
     rank          INTEGER NOT NULL DEFAULT 0,
     created_at    REAL NOT NULL
 );
@@ -132,7 +134,16 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
     cur = await conn.execute("PRAGMA user_version")
     row = await cur.fetchone()
     current = int(row[0]) if row else 0
-    # Migraciones futuras: if current < 2: await conn.executescript(ALTER ...)
+    if current < 2:
+        # v2: origen del candidato (senales o vision) y la pista visual.
+        for ddl in (
+            "ALTER TABLE moments ADD COLUMN source TEXT NOT NULL DEFAULT 'signals'",
+            "ALTER TABLE moments ADD COLUMN vision_note TEXT NOT NULL DEFAULT ''",
+        ):
+            try:
+                await conn.execute(ddl)
+            except Exception:  # noqa: BLE001 - la columna ya existe en bases nuevas
+                pass
     if current != SCHEMA_VERSION:
         await conn.execute(f"PRAGMA user_version={SCHEMA_VERSION}")
 

@@ -33,6 +33,23 @@ class Transcriber(Protocol):
 
 
 @dataclass(slots=True)
+class VisualHit:
+    """Un fotograma que el proponente visual considera digno de un clip.
+
+    `what` es una *pista*, no el titulo final: Gemini ve un fotograma sin audio ni
+    contexto y se equivoca en la semantica del juego (llamo "criatura robotica hostil"
+    al companero de partida). La etapa de puntuacion, que si tiene el transcript de la
+    ventana, es la que escribe el titulo y puede contradecirla.
+    """
+
+    t: float
+    notable: bool
+    what: str
+    kind: str
+    confidence: float
+
+
+@dataclass(slots=True)
 class ScoredMoment:
     """Salida del scorer para un candidato."""
 
