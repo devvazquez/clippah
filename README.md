@@ -193,7 +193,19 @@ Lo que se renderiza:
   entera obliga a parar el scroll, que es lo contrario de lo que se busca. Van en
   mayúsculas, con borde negro grueso, y **por encima del 20 % inferior** del lienzo,
   donde las plataformas ponen su propia interfaz.
-- **Tres layouts.** `blur` (por defecto) escala el 16:9 completo al ancho y rellena con
+- **Título quemado escrito por Gemini**, en otro registro que el de la interfaz: como lo
+  pondría el propio streamer en el post, con uno o dos emojis que aporten. Del mismo VOD
+  salieron «traumas infantiles desbloqueados 🧸» y «dando el DNI en directo 💀» donde la
+  interfaz decía «Anécdota de la infancia y juguetes prohibidos». Se dibuja con Pillow y
+  no con libass, porque libass rasteriza los emojis en monocromo.
+- **Efectos de sonido** (`backend/assets/sfx/`): un riser que muere exactamente en el pico
+  y un golpe encima de él. El pico es el instante que detectaron las señales o la visión,
+  y la ventana es asimétrica, así que cae hacia el final del clip y el riser tiene sitio
+  para construir. Medido en el mp4 resultante: +16 dB durante el riser respecto al segundo
+  5. Se apagan con `RENDER_SFX=0`.
+- **Las tres redes del streamer al pie**, con sus logos dibujados en código (sin descargar
+  assets ni depender de la red). También aparecen en la interfaz web.
+- **Cuatro layouts.** `blur` (por defecto) escala el 16:9 completo al ancho y rellena con
   una copia ampliada y desenfocada de sí mismo: no pierde nada del fotograma, lo que
   importa en estos directos porque la webcam va **compuesta dentro** del 16:9 y un
   recorte central se la come. `crop` recorta a 9:16 alrededor de `focus_x` (imagen más

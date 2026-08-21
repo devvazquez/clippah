@@ -73,6 +73,8 @@ class MomentOut(BaseModel):
     vision_note: str = ""
     # Que engancha en los primeros 2 s. Si esta vacio, el clip arranca flojo.
     hook: str = ""
+    # Titulo pensado para quemar en el video: otro registro, con emojis.
+    clip_title: str = ""
     # true cuando el mp4 vertical ya esta renderizado en disco.
     has_clip: bool = False
 
@@ -159,6 +161,8 @@ class ClipOut(BaseModel):
     size_bytes: int
     cached: bool
     download_url: str
+    sfx: int = 0
+    social: bool = False
 
 
 class SfxCue(BaseModel):

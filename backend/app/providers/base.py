@@ -90,6 +90,8 @@ class ScoredMoment:
     worth_clipping: bool
     # Que engancha en los primeros 2 segundos. Si esto esta vacio, no hay clip.
     hook: str = ""
+    # Titulo para quemar en el video: otro registro que `title`, con emojis.
+    clip_title: str = ""
 
 
 class ScorerUnavailable(RuntimeError):

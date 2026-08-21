@@ -141,6 +141,7 @@ class Settings(BaseSettings):
     render_font: str = "DejaVu Sans"
     render_font_file: str = "/usr/share/fonts/truetype/dejavu/DejaVuSans-Bold.ttf"
     render_font_size: int = 82
+    render_title_size: int = 58
     render_outline: int = 7
     render_shadow: int = 0
     render_words_per_line: int = 3     # 2-3 palabras se leen de un vistazo en vertical
@@ -154,6 +155,30 @@ class Settings(BaseSettings):
     render_preset: str = "veryfast"
     render_fps: int = 30
     render_timeout_s: float = 900.0
+
+    # --- Layout de dos camaras (medido sobre los VODs de este canal) ---
+    # x,y,w,h en fraccion del fotograma 16:9. El gameplay se recorta del centro, que es
+    # justo lo que queda libre entre las dos camaras.
+    render_cam_top: str = "0.018,0.062,0.300,0.298"
+    render_cam_bottom: str = "0.685,0.630,0.315,0.362"
+    render_cam_band: int = 340          # alto de cada banda de camara, en px de 1920
+
+    # --- Efectos de sonido ---
+    render_sfx: bool = True
+    render_sfx_riser: str = "riser-short.mp3"   # riser-short | riser-long
+    render_sfx_boom: str = "vineboom.mp3"
+    render_sfx_riser_db: float = -7.0
+    render_sfx_boom_db: float = -9.0
+
+    # --- Redes del streamer que se queman en el clip ---
+    # Formato: "plataforma|etiqueta|url" separados por ";". Plataformas con logo:
+    # twitch, youtube, tiktok.
+    social_links: str = (
+        "tiktok|@rexxyconh|https://www.tiktok.com/@rexxyconh;"
+        "youtube|REXXYCONH|https://www.youtube.com/channel/UCNI69ziiM4dUYL7N6Mi4I1g;"
+        "twitch|/rexxyconh|https://www.twitch.tv/rexxyconh"
+    )
+    render_show_social: bool = True
 
     # --- Hype ---
     hype_emotes: str = Field(default=DEFAULT_HYPE_EMOTES)
@@ -195,6 +220,20 @@ class Settings(BaseSettings):
     @property
     def db_path(self) -> Path:
         return self.data_dir / "clipper.db"
+
+    @property
+    def sfx_dir(self) -> Path:
+        return BACKEND_ROOT / "assets" / "sfx"
+
+    def cam_rect(self, raw: str) -> tuple[float, float, float, float] | None:
+        parts = [p.strip() for p in raw.split(",") if p.strip()]
+        if len(parts) != 4:
+            return None
+        try:
+            x, y, w, h = (float(p) for p in parts)
+        except ValueError:
+            return None
+        return x, y, w, h
 
     def ensure_dirs(self) -> None:
         for d in (self.data_dir, self.media_dir, self.thumbs_dir):

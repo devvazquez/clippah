@@ -21,8 +21,9 @@ from pathlib import Path
 from typing import Any
 
 from ..config import settings
-from ..models import Word
-from ..utils import CommandFailed, clamp, ffmpeg_bin, log, run
+from ..models import SfxCue, Word
+from ..utils import CommandFailed, clamp, ffmpeg_bin, ffprobe_bin, log, run
+from . import branding
 
 ProgressCb = Callable[[float, str], Awaitable[None]]
 
@@ -47,10 +48,13 @@ _EVENT_FORMAT = (
 )
 ASS_HEADER = (
     "[Script Info]\nScriptType: v4.00+\nPlayResX: {w}\nPlayResY: {h}\n"
-    "WrapStyle: 2\nScaledBorderAndShadow: yes\n\n"
+    "WrapStyle: 0\nScaledBorderAndShadow: yes\n\n"
     "[V4+ Styles]\n" + _STYLE_FORMAT + "\n"
-    "Style: Caption,{font},{size},&H00FFFFFF,&H00FFFFFF,&H00101010,&H80000000,"
-    "-1,0,0,0,100,100,0,0,1,{outline},{shadow},2,60,60,{marginv},1\n\n"
+    # BorderStyle 4 dibuja una caja detras de cada linea: sobre el HUD del juego un
+    # borde solo no basta, el texto pelea con los corazones y la barra de objetos.
+    "Style: Caption,{font},{size},&H00FFFFFF,&H00FFFFFF,&H00101010,&H55101010,"
+    "-1,0,0,0,100,100,0,0,4,{outline},0,2,60,60,{marginv},1\n\n"
+
     "[Events]\n" + _EVENT_FORMAT + "\n"
 )
 
@@ -64,6 +68,8 @@ class RenderResult:
     layout: str
     captions: int
     size_bytes: int = 0
+    sfx: int = 0
+    social: bool = False
 
 
 @dataclass(slots=True)
@@ -82,11 +88,59 @@ class RenderOptions:
     focus_x: float = 0.5          # centro del recorte en modo crop (0-1)
     facecam: tuple[float, float, float, float] | None = None  # x,y,w,h en fraccion
     words: list[Word] = field(default_factory=list)
+    sfx: list[SfxCue] = field(default_factory=list)
+    social: bool | None = None
 
 
 def _zoom_keep() -> float:
     """Fraccion del ancho original que se conserva. 1.0 = no se recorta nada."""
     return clamp(1.0 / max(1.0, settings.render_zoom), 0.5, 1.0)
+
+
+_SFX_DURATIONS: dict[str, float] = {}
+
+
+async def sfx_duration(path: Path) -> float:
+    """Duracion del efecto, cacheada (se usa para que el riser muera en el pico)."""
+    key = str(path)
+    if key not in _SFX_DURATIONS:
+        res = await run(
+            [ffprobe_bin(), "-v", "error", "-show_entries", "format=duration",
+             "-of", "default=nw=1:nk=1", str(path)],
+            timeout=30,
+        )
+        try:
+            _SFX_DURATIONS[key] = float(res.stdout.strip())
+        except ValueError:
+            _SFX_DURATIONS[key] = 1.0
+    return _SFX_DURATIONS[key]
+
+
+async def plan_sfx(moment: dict[str, Any]) -> list[SfxCue]:
+    """Donde van los efectos: el riser sube hasta el pico y el golpe cae sobre el.
+
+    El pico es el instante que detectaron las senales o la vision, y la ventana es
+    asimetrica (empieza 25 s antes), asi que el pico cae hacia el final del clip: el
+    riser tiene sitio de sobra para construir.
+    """
+    if not settings.render_sfx:
+        return []
+    t_start = float(moment["t_start"])
+    t_end = float(moment["t_end"])
+    peak = clamp(float(moment["t_peak"]) - t_start, 0.0, max(0.1, t_end - t_start))
+
+    riser = settings.sfx_dir / settings.render_sfx_riser
+    boom = settings.sfx_dir / settings.render_sfx_boom
+    cues: list[SfxCue] = []
+    if riser.exists():
+        rd = await sfx_duration(riser)
+        start = peak - rd
+        if start >= -0.2:  # si no cabe entero, mejor no ponerlo
+            cues.append(SfxCue(t=max(0.0, start), name=riser.name,
+                               gain_db=settings.render_sfx_riser_db))
+    if boom.exists():
+        cues.append(SfxCue(t=peak, name=boom.name, gain_db=settings.render_sfx_boom_db))
+    return cues
 
 
 def clips_dir() -> Path:
@@ -152,14 +206,15 @@ def group_words(
     return cues
 
 
-def build_ass(cues: list[SubtitleCue], *, uppercase: bool) -> str:
+def build_ass(
+    cues: list[SubtitleCue], *, uppercase: bool, sub_marginv: int = SUB_MARGIN_V
+) -> str:
     head = ASS_HEADER.format(
         w=OUT_W, h=OUT_H,
         font=settings.render_font, size=settings.render_font_size,
-        outline=settings.render_outline, shadow=settings.render_shadow,
-        marginv=SUB_MARGIN_V,
+        outline=settings.render_outline, marginv=sub_marginv,
     )
-    lines = []
+    lines: list[str] = []
     for c in cues:
         text = _ass_escape(c.text)
         if uppercase:
@@ -168,45 +223,6 @@ def build_ass(cues: list[SubtitleCue], *, uppercase: bool) -> str:
             f"Dialogue: 0,{_ass_time(c.start)},{_ass_time(c.end)},Caption,,0,0,0,,{text}"
         )
     return head + "\n".join(lines) + "\n"
-
-
-# Ancho de avance medio de DejaVu Sans Bold, en fracciones del tamano de fuente. Sirve
-# para estimar si el titulo cabe: `drawtext` no ajusta ni parte lineas por su cuenta, y
-# un titulo largo se sale del lienzo por los dos lados sin avisar.
-_AVG_ADVANCE = 0.62
-_TITLE_MAX_W = OUT_W - 120
-
-
-def _fit_title(title: str, *, base_size: int = 54) -> tuple[str, int]:
-    """Parte el titulo en como maximo dos lineas y reduce el cuerpo hasta que quepa."""
-    words = title.split()
-    size = base_size
-    lines: list[str] = []
-    for _ in range(6):
-        max_chars = max(8, int(_TITLE_MAX_W / (size * _AVG_ADVANCE)))
-        lines, current = [], ""
-        for w in words:
-            candidate = f"{current} {w}".strip()
-            if len(candidate) <= max_chars or not current:
-                current = candidate
-            else:
-                lines.append(current)
-                current = w
-        if current:
-            lines.append(current)
-        if len(lines) <= 2 and all(len(ln) <= max_chars for ln in lines):
-            break
-        size -= 6
-        if size <= 30:
-            break
-    if len(lines) > 2:
-        lines = [*lines[:2]]
-        lines[1] = lines[1][:-1] + "…"
-    escaped = [
-        ln.replace("\\", "").replace(":", r"\:").replace("'", "’").replace("%", r"\%")
-        for ln in lines
-    ]
-    return "\n".join(escaped), size
 
 
 def _layout_filters(layout: str, opts: RenderOptions) -> list[str]:
@@ -233,6 +249,35 @@ def _layout_filters(layout: str, opts: RenderOptions) -> list[str]:
             f"scale={OUT_W}:{game_h}:flags=lanczos,setsar=1[gamev]",
             "[camv][gamev]vstack=inputs=2,setsar=1[comp]",
         ]
+
+    if layout == "cams":
+        # El gameplay al centro y ampliado, con una camara arriba y otra abajo. Es el
+        # layout natural para un directo que ya lleva las dos webcams compuestas dentro
+        # del 16:9: recortar el centro deja fuera las dos, y cada una se recoloca en su
+        # banda a ancho completo.
+        top = settings.cam_rect(settings.render_cam_top)
+        bottom = settings.cam_rect(settings.render_cam_bottom)
+        band = max(120, min(settings.render_cam_band, (OUT_H - 400) // 2))
+        game_h = OUT_H - 2 * band
+        fx = clamp(opts.focus_x, 0.0, 1.0)
+        if not (top and bottom):
+            log.warning("coordenadas de camara invalidas: se cae al layout blur")
+        else:
+            tx, ty, tw, th = top
+            bx, by, bw, bh = bottom
+            return [
+                "[0:v]split=3[ct][cg][cb]",
+                f"[ct]crop=w=iw*{tw:.4f}:h=ih*{th:.4f}:x=iw*{tx:.4f}:y=ih*{ty:.4f},"
+                f"scale={OUT_W}:{band}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={OUT_W}:{band},setsar=1[topv]",
+                f"[cg]crop=w=ih*{OUT_W / game_h:.4f}:h=ih:"
+                f"x='(iw-ih*{OUT_W / game_h:.4f})*{fx:.3f}':y=0,"
+                f"scale={OUT_W}:{game_h}:flags=lanczos,setsar=1[gamev]",
+                f"[cb]crop=w=iw*{bw:.4f}:h=ih*{bh:.4f}:x=iw*{bx:.4f}:y=ih*{by:.4f},"
+                f"scale={OUT_W}:{band}:force_original_aspect_ratio=increase:flags=lanczos,"
+                f"crop={OUT_W}:{band},setsar=1[botv]",
+                "[topv][gamev][botv]vstack=inputs=3,setsar=1[comp]",
+            ]
 
     # blur (por defecto): el 16:9 completo a lo ancho, sobre una copia ampliada y
     # desenfocada de si mismo. No pierde nada del fotograma original.
@@ -264,6 +309,19 @@ async def render_clip(
 
     layout = (opts.layout or settings.render_layout).strip().lower()
     uppercase = settings.render_uppercase if opts.uppercase is None else opts.uppercase
+    show_social = settings.render_show_social if opts.social is None else opts.social
+
+    # Con camaras arriba y abajo, los textos tienen que caer sobre la franja del juego:
+    # encima de una cara no se lee y tapa lo que se quiere ver.
+    if layout == "cams":
+        band = max(120, min(settings.render_cam_band, (OUT_H - 400) // 2))
+        social_y = band + 14
+        title_marginv = social_y + branding.BAR_H + 16
+        sub_marginv = band + 90
+    else:
+        social_y = OUT_H - branding.BAR_H - 40
+        title_marginv = 130
+        sub_marginv = SUB_MARGIN_V
 
     cues = group_words(
         opts.words, t_start, t_end,
@@ -273,39 +331,95 @@ async def render_clip(
     filters = _layout_filters(layout, opts)
     last = "[comp]"
 
+    inputs: list[str] = []
+    extra_index = 1
+
+    if show_social:
+        links = branding.default_links()
+        if links:
+            bar = branding.build_social_bar(links, out.with_suffix(".bar.png"))
+            inputs += ["-i", str(bar)]
+            filters.append(
+                f"{last}[{extra_index}:v]overlay=x=(W-w)/2:y={social_y}[social]"
+            )
+            last = "[social]"
+            extra_index += 1
+        else:
+            show_social = False
+
+    # El titulo va como PNG y no por ASS: libass rasteriza los emojis en monocromo.
+    title = opts.title.strip() if opts.show_title else ""
+    if title:
+        card, _cw, _ch = branding.build_title_card(
+            title, out.with_suffix(".title.png"), size=settings.render_title_size
+        )
+        inputs += ["-i", str(card)]
+        filters.append(
+            f"{last}[{extra_index}:v]overlay=x=(W-w)/2:y={title_marginv}[titled]"
+        )
+        last = "[titled]"
+        extra_index += 1
+
     ass_path = out.with_suffix(".ass")
     if cues:
-        ass_path.write_text(build_ass(cues, uppercase=uppercase), encoding="utf-8")
+        ass_path.write_text(
+            build_ass(cues, uppercase=uppercase, sub_marginv=sub_marginv),
+            encoding="utf-8",
+        )
         escaped = str(ass_path).replace("\\", "\\\\").replace(":", r"\:").replace("'", r"\'")
         filters.append(f"{last}ass=filename='{escaped}'[subbed]")
         last = "[subbed]"
-    else:
+    if not cues:
         log.info("clip %s sin palabras alineadas: se renderiza sin subtitulos", moment["id"])
 
-    if opts.show_title and opts.title:
-        text, size = _fit_title(opts.title)
-        filters.append(
-            f"{last}drawtext=text='{text}':fontfile={settings.render_font_file}:"
-            f"fontsize={size}:fontcolor=white:borderw=5:bordercolor=black@0.9:"
-            f"x=(w-text_w)/2:y=130:line_spacing=10[titled]"
+    # --- audio: voz original + riser hasta el pico + golpe en el pico ---
+    sfx = opts.sfx
+    audio_map = "0:a?"
+    audio_filters: list[str] = []
+    mixed = []
+    for cue in sfx:
+        path = settings.sfx_dir / cue.name
+        if not path.exists():
+            continue
+        inputs += ["-i", str(path)]
+        label = f"sfx{extra_index}"
+        delay_ms = int(max(0.0, cue.t) * 1000)
+        audio_filters.append(
+            f"[{extra_index}:a]adelay={delay_ms}|{delay_ms},volume={cue.gain_db}dB,"
+            f"aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[{label}]"
         )
-        last = "[titled]"
+        mixed.append(f"[{label}]")
+        extra_index += 1
+    if mixed:
+        audio_filters.insert(
+            0,
+            "[0:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[voice]",
+        )
+        audio_filters.append(
+            f"[voice]{''.join(mixed)}amix=inputs={len(mixed) + 1}:duration=first:"
+            f"dropout_transition=0:normalize=0,alimiter=limit=0.97[aout]"
+        )
+        audio_map = "[aout]"
 
     cmd = [
         ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
         "-ss", f"{t_start:.3f}", "-t", f"{duration:.3f}", "-i", source,
-        "-filter_complex", ";".join(filters),
-        "-map", last, "-map", "0:a?",
+        *inputs,
+        "-filter_complex", ";".join([*filters, *audio_filters]),
+        "-map", last, "-map", audio_map,
         "-c:v", "libx264", "-preset", settings.render_preset, "-crf", str(settings.render_crf),
         "-pix_fmt", "yuv420p", "-r", str(settings.render_fps),
-        "-c:a", "aac", "-b:a", "128k", "-ac", "2",
+        "-c:a", "aac", "-b:a", "160k", "-ac", "2",
         "-movflags", "+faststart",
+        "-shortest",
         str(out),
     ]
     if progress:
         await progress(0.1, f"Renderizando {duration:.0f} s en vertical")
     await run(cmd, timeout=settings.render_timeout_s)
     ass_path.unlink(missing_ok=True)
+    out.with_suffix(".bar.png").unlink(missing_ok=True)
+    out.with_suffix(".title.png").unlink(missing_ok=True)
 
     if not out.exists() or out.stat().st_size < 4096:
         raise CommandFailed(cmd, 0, "ffmpeg no produjo un mp4 valido")
@@ -314,6 +428,7 @@ async def render_clip(
     return RenderResult(
         path=out, width=OUT_W, height=OUT_H, duration=duration, layout=layout,
         captions=len(cues), size_bytes=out.stat().st_size,
+        sfx=len(mixed), social=show_social,
     )
 
 

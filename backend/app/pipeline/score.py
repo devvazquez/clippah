@@ -267,6 +267,7 @@ def finalize(
                 "description": score.description,
                 "category": score.category,
                 "hook": score.hook,
+                "clip_title": score.clip_title or score.title,
                 "final_score": round(min(1.0, max(0.0, final)), 4),
                 "signal_score": frag.signal_score,
                 "clip_score": score.clip_score,

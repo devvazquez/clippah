@@ -43,6 +43,7 @@ Para cada fragmento devuelve:
 - description: 1-2 frases explicando que ocurre y por que funcionaria (o no) como clip
 - category: reaccion | gracioso | habilidad | fail | polemica | informativo | otro
 - hook: que se ve u oye en los primeros 2 segundos del fragmento, max 80 caracteres. Si no hay nada que enganche, dilo tal cual.
+- clip_title: el titulo que va QUEMADO encima del video vertical, max 42 caracteres. Otro registro que `title`: como lo escribiria el propio streamer en el post, natural y con gracia, nada de resumen periodistico. Uno o dos emojis que aporten (el remate, la emocion), no de adorno ni al principio de la frase. Tono de internet en espanol, algo autoparodico, sin exclamaciones vacias ni mayusculas gritadas.
 - clip_score: 0-100 segun los criterios de arriba
 - worth_clipping: boolean - false si es una falsa alarma (el chat reacciono a algo externo, es un anuncio, es un raid), si no se entiende sin contexto, o si simplemente no daria para un clip que alguien comparta
 
@@ -113,11 +114,13 @@ RESPONSE_SCHEMA: dict[str, Any] = {
             "description": {"type": "STRING"},
             "category": {"type": "STRING", "enum": list(CATEGORIES)},
             "hook": {"type": "STRING"},
+            "clip_title": {"type": "STRING"},
             "clip_score": {"type": "NUMBER"},
             "worth_clipping": {"type": "BOOLEAN"},
         },
         "required": [
-            "id", "title", "description", "category", "hook", "clip_score", "worth_clipping",
+            "id", "title", "description", "category", "hook", "clip_title",
+            "clip_score", "worth_clipping",
         ],
     },
 }
@@ -398,6 +401,7 @@ def _parse_response(payload: dict[str, Any]) -> list[ScoredMoment]:
                 description=str(item.get("description") or "").strip(),
                 category=category,
                 hook=str(item.get("hook") or "").strip()[:160],
+                clip_title=str(item.get("clip_title") or "").strip()[:90],
                 clip_score=max(0.0, min(100.0, clip_score)),
                 worth_clipping=bool(item.get("worth_clipping", True)),
             )

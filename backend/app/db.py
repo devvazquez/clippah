@@ -11,7 +11,7 @@ import aiosqlite
 
 from .config import settings
 
-SCHEMA_VERSION = 4
+SCHEMA_VERSION = 5
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS videos (
@@ -98,6 +98,7 @@ CREATE TABLE IF NOT EXISTS moments (
     vision_note   TEXT NOT NULL DEFAULT '',
     hook          TEXT NOT NULL DEFAULT '',          -- que engancha en los primeros 2 s
     clip_path     TEXT,                              -- mp4 vertical renderizado
+    clip_title    TEXT NOT NULL DEFAULT '',          -- titulo quemado, con emojis
     rank          INTEGER NOT NULL DEFAULT 0,
     created_at    REAL NOT NULL
 );
@@ -156,6 +157,14 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
         # v4: ruta del mp4 vertical renderizado.
         try:
             await conn.execute("ALTER TABLE moments ADD COLUMN clip_path TEXT")
+        except Exception:  # noqa: BLE001 - ya existe en bases nuevas
+            pass
+    if current < 5:
+        # v5: titulo pensado para quemar en el video (otro registro, con emojis).
+        try:
+            await conn.execute(
+                "ALTER TABLE moments ADD COLUMN clip_title TEXT NOT NULL DEFAULT ''"
+            )
         except Exception:  # noqa: BLE001 - ya existe en bases nuevas
             pass
     if current != SCHEMA_VERSION:

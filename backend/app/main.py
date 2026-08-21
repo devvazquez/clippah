@@ -116,6 +116,7 @@ def _moment_out(row: dict[str, Any]) -> MomentOut:
         source=row.get("source") or "signals",
         vision_note=str(row.get("vision_note") or ""),
         hook=str(row.get("hook") or ""),
+        clip_title=str(row.get("clip_title") or ""),
         has_clip=render.clip_path(str(row["id"])).exists(),
     )
 
@@ -417,6 +418,7 @@ async def render_moment(
         await db.fetch_one("SELECT * FROM videos WHERE id=?", (moment["video_id"],))
     )
     spec = _build_render_spec(moment, video)
+    spec.sfx_cues = await render.plan_sfx(moment)
 
     out = render.clip_path(moment_id)
     cached = out.exists() and out.stat().st_size > 4096 and not layout
@@ -424,10 +426,13 @@ async def render_moment(
         source = await _clip_source(video)
         opts = render.RenderOptions(
             layout=layout,
-            title=str(moment["title"]),
-            show_title=bool(moment["enriched"]),
+            # El titulo quemado es el `clip_title` del LLM; sin IA no se quema nada,
+            # porque seria las primeras palabras del transcript.
+            title=str(moment.get("clip_title") or ""),
+            show_title=bool(moment["enriched"]) and bool(moment.get("clip_title")),
             focus_x=focus_x,
             words=spec.captions,
+            sfx=await render.plan_sfx(moment),
         )
         try:
             result = await render.render_clip(source, moment, opts, out=out)
@@ -443,6 +448,7 @@ async def render_moment(
             moment_id=moment_id, width=result.width, height=result.height,
             duration=round(result.duration, 2), layout=result.layout,
             captions=result.captions, size_bytes=result.size_bytes, cached=False,
+            sfx=result.sfx, social=result.social,
             download_url=f"/api/moments/{moment_id}/clip",
         )
 
