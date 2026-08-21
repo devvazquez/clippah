@@ -238,6 +238,15 @@ async def run_pipeline(ctx: JobContext) -> int:
         "UPDATE jobs SET chat_available=?, chat_messages=?, updated_at=? WHERE id=?",
         (1 if chat_available else 0, len(messages), time.time(), ctx.job_id),
     )
+    if chat_available and info.duration > 0:
+        rate = len(messages) / (info.duration / 60.0)
+        users = len({m.user.lower() for m in messages})
+        if rate < settings.min_chat_rate_per_min or users < 3:
+            await ctx.warn(
+                f"El chat es muy escaso ({len(messages)} mensajes de {users} "
+                f"{'usuario' if users == 1 else 'usuarios'}, {rate:.1f}/min): aporta poco "
+                f"como senal y el analisis se guiara sobre todo por el audio."
+            )
 
     # ---------------------------------------------------------------- 3. senales
     await ctx.stage_progress("signals", 0.2, "Analizando audio y chat")

@@ -77,6 +77,9 @@ class Settings(BaseSettings):
     baseline_window_s: float = 300.0
     combo_bonus: float = 1.4
     combo_window_s: float = 10.0
+    # Por debajo de este ritmo el chat no discrimina: el z-score se satura en el suelo
+    # y todos los bins con mensaje valen igual. Se avisa, no se descarta.
+    min_chat_rate_per_min: float = 3.0
     mute_gap_s: float = 30.0
 
     # --- Local ---

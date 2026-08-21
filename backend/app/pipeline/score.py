@@ -82,7 +82,9 @@ def heuristic_scores(fragments: list[Fragment], *, chat_available: bool) -> list
     for frag, p in zip(fragments, pct, strict=True):
         head = first_words(frag.transcript, 8)
         title = head or f"Momento a {hhmmss(frag.t_peak)}"
-        if chat_available and frag.msg_count:
+        # Con 1-2 mensajes no hay "pico de actividad" que describir: manda el audio.
+        chat_is_signal = chat_available and frag.msg_count >= 3
+        if chat_is_signal:
             window = int(2 * settings.combo_window_s)
             description = f"Pico de actividad: {frag.msg_count} mensajes en {window} s"
             if frag.chat_ratio >= 1.1:
@@ -96,6 +98,11 @@ def heuristic_scores(fragments: list[Fragment], *, chat_available: bool) -> list
             )
         else:
             description = "Pico de actividad detectado por las senales del directo."
+        if chat_available and frag.msg_count and not chat_is_signal:
+            msgs = frag.msg_count
+            description += (
+                f" {msgs} mensaje{'s' if msgs != 1 else ''} de chat en la ventana."
+            )
         if frag.combo:
             description += " Coinciden pico de audio y pico de chat."
         out.append(
