@@ -18,7 +18,7 @@ help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
 	  awk 'BEGIN {FS = ":.*?## "}; {printf "  \033[36m%-16s\033[0m %s\n", $$1, $$2}'
 
-setup: setup-backend setup-frontend ## Instala todas las dependencias
+setup: setup-backend setup-frontend setup-emoji ## Instala todas las dependencias
 
 setup-backend: ## Crea el venv del backend e instala dependencias
 	$(PY) -m venv $(VENV)
@@ -29,6 +29,14 @@ setup-backend: ## Crea el venv del backend e instala dependencias
 
 setup-local: ## Anade faster-whisper para transcribir en local sin API keys
 	$(PYBIN)/pip install -e "backend[local]"
+
+setup-emoji: ## Baja el artwork de emojis de Apple para los titulos de los clips
+	@tmp=$$(mktemp -d); cd $$tmp && npm install --silent --no-audit --no-fund emoji-datasource-apple; \
+	 mkdir -p $(CURDIR)/backend/assets/emoji; \
+	 rm -rf $(CURDIR)/backend/assets/emoji/apple; \
+	 cp -r $$tmp/node_modules/emoji-datasource-apple/img/apple/64 $(CURDIR)/backend/assets/emoji/apple; \
+	 rm -rf $$tmp; \
+	 echo "$$(ls $(CURDIR)/backend/assets/emoji/apple | wc -l) emojis instalados"
 
 setup-frontend: ## Instala las dependencias del frontend
 	cd frontend && npm install

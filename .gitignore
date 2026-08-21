@@ -7,6 +7,10 @@ venv/
 .ruff_cache/
 .pytest_cache/
 
+# Artwork de emojis de Apple: se baja con `make setup-emoji`, no se versiona (27 MB y
+# es propiedad de Apple).
+backend/assets/emoji/
+
 # Backend data (media, thumbs, sqlite)
 backend/data/
 !backend/data/.gitkeep

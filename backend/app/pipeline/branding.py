@@ -73,13 +73,27 @@ def _youtube(d: ImageDraw.ImageDraw, x: int, y: int, s: int) -> None:
 
 
 def _tiktok_note(d: ImageDraw.ImageDraw, x: int, y: int, s: int, colour) -> None:
-    # Nota: circulo abajo-izquierda, mastil vertical y bandera arriba a la derecha.
-    r = s * 0.24
+    """Nota de TikTok: cabeza redonda, mastil y banderilla enganchada al mastil.
+
+    La banderilla se dibuja como un arco *trazado* que arranca justo en el mastil. Antes
+    era un sector de circulo suelto y salia flotando al lado, como si el logo estuviera
+    cortado.
+    """
+    pad = s * 0.04
+    y += pad
+    s -= 2 * pad
+    r = s * 0.255
+    stem_w = max(2.0, s * 0.16)
+    stem_x = s * 0.60
     d.ellipse([x, y + s - 2 * r, x + 2 * r, y + s], fill=colour)
-    stem_w = s * 0.14
-    d.rectangle([x + 2 * r - stem_w, y + s * 0.16, x + 2 * r, y + s - r], fill=colour)
-    d.pieslice([x + 2 * r - stem_w, y, x + 2 * r + s * 0.42, y + s * 0.46],
-               start=-95, end=55, fill=colour)
+    d.rectangle([x + stem_x - stem_w, y + s * 0.06, x + stem_x, y + s - r], fill=colour)
+    box = [
+        x + stem_x - stem_w,
+        y + s * 0.06,
+        x + stem_x - stem_w + s * 0.62,
+        y + s * 0.06 + s * 0.62,
+    ]
+    d.arc(box, start=180, end=310, fill=colour, width=int(round(stem_w)))
 
 
 def _tiktok(d: ImageDraw.ImageDraw, x: int, y: int, s: int) -> None:
@@ -136,6 +150,52 @@ _EMOJI_RE = re.compile(
     "([\U0001F000-\U0001FAFF\u2600-\u27BF\U0001F1E6-\U0001F1FF\u2B00-\u2BFF"
     "\uFE0F\u200D\u2190-\u21FF\u2900-\u297F]+)"
 )
+# Modificadores que no forman un emoji por si mismos: selector de variacion, ZWJ,
+# tonos de piel y las teclas combinantes.
+_EMOJI_MODIFIERS = {0xFE0F, 0xFE0E, 0x200D, 0x20E3}
+
+
+def _emoji_units(chunk: str) -> list[str]:
+    """Parte una racha de emojis en unidades: una secuencia ZWJ cuenta como una sola."""
+    units: list[str] = []
+    current = ""
+    for ch in chunk:
+        cp = ord(ch)
+        joins = cp in _EMOJI_MODIFIERS or 0x1F3FB <= cp <= 0x1F3FF
+        if current and not joins and not current.endswith("\u200d"):
+            units.append(current)
+            current = ch
+        else:
+            current += ch
+    if current:
+        units.append(current)
+    return units
+
+
+def apple_emoji_png(unit: str) -> Path | None:
+    """PNG de Apple para ese emoji, si el artwork esta instalado.
+
+    Se instala con `make setup-emoji`: son 27 MB y es artwork de Apple, asi que no va
+    versionado. Sin el, se cae a la fuente de emoji del sistema.
+    """
+    base = settings.emoji_dir
+    if not base.is_dir():
+        return None
+    cps = [f"{ord(c):04x}" for c in unit]
+    candidates = ["-".join(cps)]
+    stripped = [c for c in cps if c not in ("fe0f", "fe0e")]
+    if stripped and stripped != cps:
+        candidates.append("-".join(stripped))
+    if len(stripped) == 1:
+        candidates.append(f"{stripped[0]}-fe0f")
+    for name in candidates:
+        path = base / f"{name}.png"
+        if path.exists():
+            return path
+    log.info("emoji sin artwork de Apple: %s", "-".join(cps))
+    return None
+
+
 EMOJI_FONT_CANDIDATES = (
     "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
     "/usr/share/fonts/truetype/noto/NotoColorEmoji-Regular.ttf",
@@ -211,8 +271,20 @@ def build_title_card(
         x = (img.width - total) / 2
         y = 10 + i * line_h
         for is_emoji, tok in line:
-            if is_emoji and emo_font is not None:
-                d.text((x, y + size * 0.08), tok, font=emo_font, embedded_color=True)
+            if is_emoji:
+                cursor = x
+                for unit in _emoji_units(tok):
+                    png = apple_emoji_png(unit)
+                    box = int(size * 1.05)
+                    if png is not None:
+                        art = Image.open(png).convert("RGBA").resize(
+                            (box, box), Image.LANCZOS
+                        )
+                        img.alpha_composite(art, (int(cursor), int(y + size * 0.10)))
+                    elif emo_font is not None:
+                        d.text((cursor, y + size * 0.08), unit, font=emo_font,
+                               embedded_color=True)
+                    cursor += size * 1.15
             else:
                 d.text((x, y), tok, font=text_font, fill=WHITE,
                        stroke_width=max(3, size // 12), stroke_fill=(8, 8, 10, 235))

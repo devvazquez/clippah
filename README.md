@@ -45,6 +45,7 @@ ninguna clave la app funciona igual, solo más lenta y con títulos menos ricos.
 | `make backend` / `make frontend` | Solo uno de los dos |
 | `make check` | `ruff check` + `tsc --noEmit` |
 | `make doctor` | Comprueba ffmpeg/ffprobe y las dependencias |
+| `make setup-emoji` | Baja el artwork de emojis de Apple para los títulos |
 | `make clean-data` | Borra media, miniaturas y la base de datos |
 
 ### Capturas
@@ -197,7 +198,9 @@ Lo que se renderiza:
   pondría el propio streamer en el post, con uno o dos emojis que aporten. Del mismo VOD
   salieron «traumas infantiles desbloqueados 🧸» y «dando el DNI en directo 💀» donde la
   interfaz decía «Anécdota de la infancia y juguetes prohibidos». Se dibuja con Pillow y
-  no con libass, porque libass rasteriza los emojis en monocromo.
+  no con libass, porque libass rasteriza los emojis en monocromo. Los emojis son los de
+  iPhone: `make setup-emoji` baja el artwork de Apple (27 MB, no versionado por tamaño y
+  por ser suyo); sin él se cae a la fuente de emoji del sistema.
 - **Efectos de sonido** (`backend/assets/sfx/`): un riser que muere exactamente en el pico
   y un golpe encima de él. El pico es el instante que detectaron las señales o la visión,
   y la ventana es asimétrica, así que cae hacia el final del clip y el riser tiene sitio

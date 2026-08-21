@@ -222,6 +222,11 @@ class Settings(BaseSettings):
         return self.data_dir / "clipper.db"
 
     @property
+    def emoji_dir(self) -> Path:
+        """Artwork de emojis de Apple (se instala con `make setup-emoji`)."""
+        return BACKEND_ROOT / "assets" / "emoji" / "apple"
+
+    @property
     def sfx_dir(self) -> Path:
         return BACKEND_ROOT / "assets" / "sfx"
 
