@@ -86,11 +86,14 @@ directamente: comparten un proyecto de Supabase.
 - **Los clips se sirven desde Storage** con URLs firmadas de 12 h. El botón de descarga usa
   `?download=<nombre>`, que hace que Storage mande `Content-Disposition: attachment`: el
   mp4 se guarda con un nombre legible en vez de abrirse en una pestaña.
-- **Los subtítulos se editan desde la interfaz.** Cada clip guarda las frases que lleva
-  quemadas; el botón de subtítulos abre el texto, se corrige lo que Whisper oyó mal, y al
-  guardar el worker vuelve a quemar el clip y lo sube como versión nueva (otra ruta, para
+- **Los subtítulos y el sonido se editan desde la interfaz.** Cada clip guarda lo que
+  lleva puesto: las frases quemadas y los efectos con su segundo. El editor tiene dos
+  pestañas — corregir lo que Whisper oyó mal, y decidir qué suena: la pista de música (o
+  ninguna) y los efectos, que se colocan parando el vídeo donde tienen que sonar. Al
+  guardar, el worker vuelve a quemar el clip y lo sube como versión nueva (otra ruta, para
   que ningún navegador siga sirviendo el mp4 viejo de su caché). De un clip, la clave anon
-  solo puede escribir esas dos columnas: no es RLS, son permisos por columna.
+  solo puede escribir esas cuatro columnas: no es RLS, que no distingue columnas, son
+  permisos por columna.
 
 ### Montarlo
 

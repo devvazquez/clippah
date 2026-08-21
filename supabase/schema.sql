@@ -88,6 +88,12 @@ create table if not exists public.clips (
 -- navegador sirva el viejo de su cache.
 alter table public.clips add column if not exists captions        jsonb not null default '[]'::jsonb;
 alter table public.clips add column if not exists captions_edited jsonb;
+-- El sonido se edita igual que los subtitulos: `sfx_cues` es lo que suena ahora
+-- ([{"name": "vineboom.mp3", "t": 12.4, "gain_db": -9}]) y `sfx_edited` lo que espera
+-- render ([] = ningun efecto). `music_edited` es la pista ('' = ninguna).
+alter table public.clips add column if not exists sfx_cues        jsonb not null default '[]'::jsonb;
+alter table public.clips add column if not exists sfx_edited      jsonb;
+alter table public.clips add column if not exists music_edited    text;
 alter table public.clips add column if not exists render_status   text not null default 'ready';
 alter table public.clips add column if not exists render_error    text;
 alter table public.clips add column if not exists version         int not null default 1;
@@ -174,15 +180,17 @@ create policy "anon cancela lo que aun no ha empezado" on public.clip_requests
   using (status = 'queued')
   with check (status = 'canceled');
 
--- Editar subtitulos es lo unico que la interfaz puede escribir en un clip. RLS no
--- distingue columnas, asi que la restriccion de verdad son los permisos: se le quita el
--- UPDATE entero y se le devuelve solo sobre esas dos columnas. Con eso, un cliente con la
+-- Los subtitulos y el sonido son lo unico que la interfaz puede escribir en un clip. RLS
+-- no distingue columnas, asi que la restriccion de verdad son los permisos: se le quita el
+-- UPDATE entero y se le devuelve solo sobre esas columnas. Con eso, un cliente con la
 -- clave anon no puede reescribir el titulo, la puntuacion ni la ruta del mp4.
 revoke update on public.clips from anon, authenticated;
-grant update (captions_edited, render_status) on public.clips to anon, authenticated;
+grant update (captions_edited, sfx_edited, music_edited, render_status)
+  on public.clips to anon, authenticated;
 
 drop policy if exists "anon pide re-render con subtitulos nuevos" on public.clips;
-create policy "anon pide re-render con subtitulos nuevos" on public.clips
+drop policy if exists "anon pide re-render" on public.clips;
+create policy "anon pide re-render" on public.clips
   for update to anon, authenticated
   using (render_status in ('ready', 'error'))
   with check (render_status = 'rerender_queued');

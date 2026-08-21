@@ -160,6 +160,12 @@ class QueueStatus(BaseModel):
     project_url: str = ""
 
 
+class SfxCue(BaseModel):
+    t: float
+    name: str
+    gain_db: float = 0.0
+
+
 class CaptionCue(BaseModel):
     """Una frase de subtitulo, en segundos desde el inicio del clip."""
 
@@ -183,14 +189,9 @@ class ClipOut(BaseModel):
     sfx: int = 0
     music: str = ""
     social: bool = False
-    # Los subtitulos que lleva quemados, para poder corregirlos y volver a renderizar.
+    # Lo que lleva puesto, para poder corregirlo y volver a renderizar.
     cues: list[CaptionCue] = Field(default_factory=list)
-
-
-class SfxCue(BaseModel):
-    t: float
-    name: str
-    gain_db: float = 0.0
+    sfx_cues: list[SfxCue] = Field(default_factory=list)
 
 
 class RenderSpec(BaseModel):

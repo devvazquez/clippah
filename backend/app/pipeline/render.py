@@ -76,8 +76,9 @@ class RenderResult:
     layout: str
     captions: int
     size_bytes: int = 0
-    # Las frases tal como han quedado quemadas, para poder editarlas despues.
+    # Las frases y los efectos tal como han quedado, para poder editarlos despues.
     cues: list[SubtitleCue] = field(default_factory=list)
+    sfx_cues: list[SfxCue] = field(default_factory=list)
     sfx: int = 0
     music: str = ""
     social: bool = False
@@ -503,7 +504,8 @@ async def render_clip(
         await progress(1.0, "Clip listo")
     return RenderResult(
         path=out, width=OUT_W, height=OUT_H, duration=duration, layout=layout,
-        captions=len(cues), cues=cues, size_bytes=out.stat().st_size,
+        captions=len(cues), cues=cues, sfx_cues=list(opts.sfx),
+        size_bytes=out.stat().st_size,
         sfx=len([m for m in mixed if m != "[music]"]), music=music_name,
         social=show_social,
     )

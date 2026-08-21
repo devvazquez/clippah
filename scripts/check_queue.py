@@ -110,9 +110,12 @@ async def upload(bucket: str, path: str, request: Request) -> dict[str, str]:
     return {"Key": f"{bucket}/{path}"}
 
 
-@stub.delete("/storage/v1/object/{bucket}/{path:path}")
-async def remove(bucket: str, path: str) -> dict[str, str]:
-    fake.objects.pop(f"{bucket}/{path}", None)
+@stub.delete("/storage/v1/object/{bucket}")
+async def remove(bucket: str, request: Request) -> dict[str, str]:
+    """Borrado en lote, que es el que usa el cliente (`{"prefixes": [...]}`)."""
+    body = await request.json()
+    for path in body.get("prefixes", []):
+        fake.objects.pop(f"{bucket}/{path}", None)
     return {"message": "Successfully deleted"}
 
 
@@ -205,7 +208,8 @@ async def main() -> None:
             "objects": dict(fake.objects),
             "storage_path": fake.clips[0]["storage_path"] if fake.clips else "",
         }
-        # --- segunda escena: alguien corrige un subtitulo desde la interfaz
+        # --- segunda escena: desde la interfaz se corrige una frase, se cambia la
+        #     musica y se coloca un efecto a mano
         if fake.clips:
             clip = fake.clips[0]
             before = list(clip.get("captions") or [])
@@ -215,6 +219,8 @@ async def main() -> None:
             ] or [{"text": "PRUEBA", "start": 0.5, "end": 2.0}]
             first_path = clip["storage_path"]
             clip["captions_edited"] = edited
+            clip["sfx_edited"] = [{"name": "vineboom.mp3", "t": 3.5, "gain_db": -9}]
+            clip["music_edited"] = "sneaky_snitch"
             clip["render_status"] = "rerender_queued"
             await until(lambda: clip.get("render_status") in ("ready", "error")
                         and clip.get("storage_path") != first_path)
@@ -274,7 +280,17 @@ async def main() -> None:
         check("guarda el texto editado",
               bool(cues) and cues[0]["text"] == "PRUEBA",
               cues[0]["text"] if cues else "sin frases")
-        check("limpia el borrador", clip.get("captions_edited") is None)
+        efectos = clip.get("sfx_cues") or []
+        check("quema el efecto colocado a mano",
+              len(efectos) == 1 and efectos[0]["name"] == "vineboom.mp3"
+              and abs(float(efectos[0]["t"]) - 3.5) < 0.01,
+              str(efectos))
+        check("cambia la musica", clip.get("music") == "sneaky_snitch", str(clip.get("music")))
+        check("marca los efectos como manuales", clip.get("sfx") == "manual",
+              str(clip.get("sfx")))
+        check("limpia los borradores",
+              clip.get("captions_edited") is None and clip.get("sfx_edited") is None
+              and clip.get("music_edited") is None)
 
     print("\n" + ("Todo correcto" if ok else "Hay fallos"))
     raise SystemExit(0 if ok else 1)

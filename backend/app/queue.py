@@ -189,13 +189,27 @@ class QueueWorker:
         return claimed[0] if claimed else None
 
     async def _rerender(self, sb: Supabase, clip: dict[str, Any]) -> None:
-        """Vuelve a quemar el clip con las frases que ha escrito la interfaz."""
+        """Vuelve a quemar el clip con lo que ha editado la interfaz.
+
+        Cada campo se manda solo si la interfaz lo ha tocado: `None` significa "deja lo
+        que habia" y no es lo mismo que una lista vacia, que significa "ningun efecto".
+        """
         clip_id = str(clip["id"])
         moment_id = str(clip["moment_id"])
-        cues = clip.get("captions_edited") or clip.get("captions") or []
-        log.info("re-render de %s (%d frases)", moment_id, len(cues))
+        cues = clip.get("captions_edited")
+        if cues is None:
+            cues = clip.get("captions") or []
+        sfx = clip.get("sfx_edited")
+        music = clip.get("music_edited")
+        log.info(
+            "re-render de %s (%d frases, %s efectos, musica %r)",
+            moment_id, len(cues), "auto" if sfx is None else len(sfx),
+            music if music is not None else "sin cambios",
+        )
         try:
-            result = await service.render_moment_clip(moment_id, cues=cues)
+            result = await service.render_moment_clip(
+                moment_id, cues=cues, sfx=sfx, music=music
+            )
             path = Path(render.clip_path(moment_id))
             if not path.exists():
                 raise RuntimeError("el clip no aparecio en disco")
@@ -207,16 +221,26 @@ class QueueWorker:
             folder = old_path.rsplit("/", 1)[0] if "/" in old_path else "manual"
             new_path = f"{folder}/{moment_id}-v{version}.mp4"
             await sb.upload(new_path, path.read_bytes(), content_type="video/mp4")
-            await sb.update(CLIPS, {
+            patch: dict[str, Any] = {
                 "storage_path": new_path,
                 "size_bytes": result.size_bytes,
                 "duration_s": result.duration,
                 "captions": [c.model_dump() for c in result.cues],
+                "sfx_cues": [c.model_dump() for c in result.sfx_cues],
                 "captions_edited": None,
+                "sfx_edited": None,
+                "music_edited": None,
                 "version": version,
                 "render_status": "ready",
                 "render_error": None,
-            }, match={"id": f"eq.{clip_id}"})
+            }
+            # `sfx`/`music` describen lo que suena: si la edicion los cambio, la fila
+            # tiene que contarlo, o la interfaz seguiria mostrando la eleccion del modelo.
+            if sfx is not None:
+                patch["sfx"] = "manual" if sfx else "ninguno"
+            if music is not None:
+                patch["music"] = music or "ninguna"
+            await sb.update(CLIPS, patch, match={"id": f"eq.{clip_id}"})
             if old_path and old_path != new_path:
                 await sb.delete(old_path)
             log.info("re-render de %s listo (v%d)", moment_id, version)
@@ -401,8 +425,9 @@ def _clip_row(
         "music": str(moment.get("music") or "ninguna"),
         "transcript": str(moment.get("transcript") or ""),
         "reason": str(moment.get("description") or ""),
-        # Lo que lleva quemado ahora mismo: es lo que edita la interfaz.
+        # Lo que lleva puesto ahora mismo: es lo que edita la interfaz.
         "captions": [c.model_dump() for c in clip.cues],
+        "sfx_cues": [c.model_dump() for c in clip.sfx_cues],
         "render_status": "ready",
         "render_error": None,
     }

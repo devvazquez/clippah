@@ -1,9 +1,9 @@
 "use client";
 
-import { Copy, Download, ExternalLink, Loader2, Subtitles } from "lucide-react";
+import { Copy, Download, ExternalLink, Loader2, SlidersHorizontal } from "lucide-react";
 import * as React from "react";
 import { toast } from "sonner";
-import { CaptionEditor } from "@/components/CaptionEditor";
+import { ClipEditor } from "@/components/ClipEditor";
 import { Button } from "@/components/ui/button";
 import { downloadUrl } from "@/lib/supabase";
 import { type Clip, MUSIC_LABELS, SFX_LABELS } from "@/lib/types";
@@ -53,7 +53,7 @@ export function ClipCard({ clip, src }: { clip: Clip; src?: string }) {
         {busy ? (
           <p className="absolute inset-x-0 top-0 z-10 flex items-center justify-center gap-1.5 bg-black/75 py-1.5 text-[11px] text-ink">
             <Loader2 className="h-3 w-3 animate-spin" aria-hidden />
-            rehaciendo subtítulos
+            rehaciendo el clip
           </p>
         ) : null}
         {src ? (
@@ -136,9 +136,9 @@ export function ClipCard({ clip, src }: { clip: Clip; src?: string }) {
             size="icon"
             onClick={() => setEditing(true)}
             disabled={busy}
-            title="Editar los subtítulos"
+            title="Editar subtítulos y sonido"
           >
-            <Subtitles className="h-3.5 w-3.5" aria-hidden />
+            <SlidersHorizontal className="h-3.5 w-3.5" aria-hidden />
           </Button>
           <Button variant="outline" size="icon" onClick={copyTitle} title="Copiar el título">
             <Copy className="h-3.5 w-3.5" aria-hidden />
@@ -157,7 +157,7 @@ export function ClipCard({ clip, src }: { clip: Clip; src?: string }) {
         </div>
       </div>
 
-      <CaptionEditor
+      <ClipEditor
         clip={clip}
         src={src}
         open={editing}

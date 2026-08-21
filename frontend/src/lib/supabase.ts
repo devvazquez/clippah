@@ -8,7 +8,7 @@
  */
 
 import { type SupabaseClient, createClient } from "@supabase/supabase-js";
-import type { Clip, ClipRequest, Cue } from "@/lib/types";
+import type { Clip, ClipRequest, Cue, SfxCue } from "@/lib/types";
 
 const URL = process.env.NEXT_PUBLIC_SUPABASE_URL ?? "";
 const ANON = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ?? "";
@@ -117,17 +117,29 @@ export function downloadUrl(signed: string, filename: string): string {
  * tabla no le dan el resto (ver `supabase/schema.sql`). El worker de la sandbox ve el
  * `rerender_queued`, rehace el mp4 y devuelve la fila a `ready`.
  */
-export async function saveCaptions(clipId: string, cues: Cue[]): Promise<void> {
+export async function saveClipEdit(
+  clipId: string,
+  edit: { cues?: Cue[]; sfx?: SfxCue[]; music?: string },
+): Promise<void> {
   const sb = supabase();
   if (!sb) throw new Error("Falta configurar las claves de Supabase");
-  const clean = cues
-    .map((c) => ({ text: c.text.trim(), start: c.start, end: c.end }))
-    .filter((c) => c.text.length > 0);
-  if (clean.length === 0) throw new Error("No queda ninguna frase con texto");
-  const { error } = await sb
-    .from("clips")
-    .update({ captions_edited: clean, render_status: "rerender_queued" })
-    .eq("id", clipId);
+  const patch: Record<string, unknown> = { render_status: "rerender_queued" };
+  if (edit.cues) {
+    const clean = edit.cues
+      .map((c) => ({ text: c.text.trim(), start: c.start, end: c.end }))
+      .filter((c) => c.text.length > 0);
+    if (clean.length === 0) throw new Error("No queda ninguna frase con texto");
+    patch.captions_edited = clean;
+  }
+  // Una lista vacia es una edicion valida ("ningun efecto"), asi que se compara con
+  // undefined y no por si esta vacia.
+  if (edit.sfx !== undefined) {
+    patch.sfx_edited = edit.sfx.map((c) => ({
+      name: c.name, t: Math.max(0, Number(c.t.toFixed(2))), gain_db: c.gain_db,
+    }));
+  }
+  if (edit.music !== undefined) patch.music_edited = edit.music;
+  const { error } = await sb.from("clips").update(patch).eq("id", clipId);
   if (error) throw new Error(error.message);
 }
 

@@ -38,6 +38,13 @@ export interface Cue {
   end: number;
 }
 
+/** Un efecto colocado en el clip: `name` es el fichero de `backend/assets/sfx`. */
+export interface SfxCue {
+  name: string;
+  t: number;
+  gain_db?: number;
+}
+
 export interface Clip {
   id: string;
   request_id: string | null;
@@ -65,10 +72,28 @@ export interface Clip {
   // Subtitulos: `captions` es lo que hay quemado; `captions_edited` lo que espera render.
   captions: Cue[];
   captions_edited: Cue[] | null;
+  sfx_cues: SfxCue[];
+  sfx_edited: SfxCue[] | null;
+  music_edited: string | null;
   render_status: RenderStatus;
   render_error: string | null;
   version: number;
 }
+
+/** Las pistas que hay en `backend/assets/music`, en el orden en que se ofrecen. */
+export const MUSIC_TRACKS: { key: string; label: string }[] = [
+  { key: "", label: "Ninguna" },
+  { key: "fluffing_a_duck", label: "Fluffing a Duck" },
+  { key: "sneaky_snitch", label: "Sneaky Snitch" },
+  { key: "sneaky_adventure", label: "Sneaky Adventure" },
+];
+
+/** Los efectos que hay en `backend/assets/sfx`. `gain_db` es el nivel al colocarlos. */
+export const SFX_KINDS: { name: string; label: string; gain_db: number }[] = [
+  { name: "vineboom.mp3", label: "Golpe", gain_db: -9 },
+  { name: "riser-short.mp3", label: "Riser corto", gain_db: -7 },
+  { name: "riser-long.mp3", label: "Riser largo", gain_db: -7 },
+];
 
 export const MUSIC_LABELS: Record<string, string> = {
   fluffing_a_duck: "Fluffing a Duck",

@@ -15,7 +15,7 @@ from typing import Any
 from . import db
 from .config import settings
 from .events import hub
-from .models import CaptionCue, ClipOut, RenderSpec, Word
+from .models import CaptionCue, ClipOut, RenderSpec, SfxCue, Word
 from .pipeline import frames, render, vision
 from .pipeline.ingest import ProbeFailed, UnsupportedUrl, VodTooLong, probe, resolve_url
 from .pipeline.orchestrator import new_id, runner
@@ -151,22 +151,43 @@ def _cues(raw: list[dict[str, Any]]) -> list[render.SubtitleCue]:
     return sorted(out, key=lambda c: c.start)
 
 
+def _sfx(raw: list[dict[str, Any]]) -> list[SfxCue]:
+    """Efectos guardados -> efectos de render, con solo los ficheros que existen."""
+    out = []
+    for c in raw:
+        name = str(c.get("name") or "").strip()
+        if not name or not (settings.sfx_dir / name).exists():
+            log.warning("efecto desconocido, se ignora: %r", name)
+            continue
+        gain = c.get("gain_db")
+        out.append(SfxCue(
+            t=max(0.0, float(c.get("t") or 0.0)),
+            name=name,
+            gain_db=float(gain) if gain is not None else settings.render_sfx_boom_db,
+        ))
+    return sorted(out, key=lambda c: c.t)
+
+
 async def render_moment_clip(
     moment_id: str,
     *,
     layout: str = "",
     focus_x: float = 0.5,
     cues: list[dict[str, Any]] | None = None,
+    sfx: list[dict[str, Any]] | None = None,
+    music: str | None = None,
 ) -> ClipOut:
     """Renderiza (o reutiliza) el vertical 9:16 de un momento.
 
-    Con `cues` se queman esas frases en vez de las que salen del transcript, y el clip
-    se rehace aunque ya estuviera en disco: es como entran los subtitulos corregidos.
+    `cues`, `sfx` y `music` son las ediciones que llegan de la interfaz: sustituyen a lo
+    que eligio el modelo y fuerzan el re-render aunque el clip ya estuviera en disco. Una
+    lista de efectos vacia significa "ninguno", que no es lo mismo que no tocarlos.
     """
     moment, video = await load_moment(moment_id)
     out = render.clip_path(moment_id)
-    # Un layout explicito o unos subtitulos nuevos siempre re-renderizan.
-    if out.exists() and out.stat().st_size > 4096 and not layout and cues is None:
+    edited = cues is not None or sfx is not None or music is not None
+    # Un layout explicito o una edicion siempre re-renderizan.
+    if out.exists() and out.stat().st_size > 4096 and not layout and not edited:
         spec = build_render_spec(moment, video)
         cached_cues = render.group_words(
             spec.captions, spec.t_start, spec.t_end,
@@ -183,6 +204,11 @@ async def render_moment_clip(
                 CaptionCue(text=c.text, start=round(c.start, 3), end=round(c.end, 3))
                 for c in cached_cues
             ],
+            # Lo que suena en el mp4 que ya esta en disco: sale de lo mismo que salio
+            # entonces (el modo elegido por el scorer y el pico), asi que reconstruirlo
+            # es fiel y evita que la interfaz muestre "sin efectos" en un clip que si
+            # los lleva.
+            sfx_cues=await render.plan_sfx(moment),
         )
 
     spec = build_render_spec(moment, video)
@@ -196,8 +222,8 @@ async def render_moment_clip(
         focus_x=focus_x,
         words=spec.captions,
         cues=_cues(cues) if cues is not None else None,
-        sfx=await render.plan_sfx(moment),
-        music=str(moment.get("music") or ""),
+        sfx=_sfx(sfx) if sfx is not None else await render.plan_sfx(moment),
+        music=str(moment.get("music") or "") if music is None else music,
         cam_layout=await cam_layout(video, moment),
     )
     try:
@@ -218,4 +244,5 @@ async def render_moment_clip(
             CaptionCue(text=c.text, start=round(c.start, 3), end=round(c.end, 3))
             for c in result.cues
         ],
+        sfx_cues=list(result.sfx_cues),
     )
