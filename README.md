@@ -336,6 +336,16 @@ Lo que se renderiza:
   La elige el scorer igual que los efectos, y puede decir «ninguna». Va a −30 dB con
   fundidos: acompaña, no interviene. **Al publicar hay que acreditarla** (lo pide la
   licencia): «Music: Kevin MacLeod (incompetech.com), CC BY 3.0».
+- **Al volumen del feed.** TikTok, Instagram y YouTube normalizan a **−14 LUFS**, así que un
+  clip que salga a −23 se oye la mitad de alto que lo que hay antes y después: el
+  espectador sube el volumen o se va. Se mide el mp4 ya montado con EBU R128 y se le aplica
+  la ganancia que le falta, de una vez y sin tocar la dinámica; el vídeo se copia sin
+  recodificar, así que cuesta un par de segundos. Lo único que frena la subida es el pico:
+  a un clip cuyo golpe ya está a −6 dBFS no se le pueden dar 11 dB sin que el limitador lo
+  machaque, así que se le deja pasar del techo `RENDER_LIMITER_HEADROOM_DB` (4 dB) y el
+  resto se cede. Los doce clips de prueba pasaron de −18,8…−25,5 LUFS a −14,3…−17,0, con
+  todos los picos reales por debajo de −1,4 dBFS. `loudnorm` en dos pasadas se probó antes
+  y salía peor: se pasaba del objetivo hasta 2 dB y dejaba picos por encima de 0 dBFS.
 - **Las tres redes del streamer al pie**, con sus logos dibujados en código (sin descargar
   assets ni depender de la red). También aparecen en la interfaz web.
 - **Cuatro layouts.** `blur` (por defecto) escala el 16:9 completo al ancho y rellena con
@@ -461,6 +471,9 @@ Todo en `backend/.env` (ver `backend/.env.example`). Lo más útil:
 | `SUPABASE_URL` / `SUPABASE_SERVICE_KEY` | — | Activan el worker de la cola. Sin ellas, el backend va suelto |
 | `SUPABASE_BUCKET` | `clips` | Bucket donde se suben los mp4 |
 | `SUPABASE_POLL_S` | `2` | Cada cuánto pregunta el backend por peticiones nuevas |
+| `RENDER_TARGET_LUFS` | `-14` | Volumen final del clip, el de referencia de las redes |
+| `RENDER_PEAK_CEILING_DB` | `-1` | Techo de pico real. Deja margen para el remuestreo de las plataformas |
+| `RENDER_LIMITER_HEADROOM_DB` | `4` | Cuánto puede pasar del techo antes de que lo recorte el limitador |
 
 ### Cuánto tarda
 

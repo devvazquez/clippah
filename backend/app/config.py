@@ -192,6 +192,21 @@ class Settings(BaseSettings):
     render_music_fade_s: float = 1.5
     render_music_default: str = "fluffing-a-duck.mp3"
 
+    # --- Volumen final ---
+    # TikTok, Instagram y YouTube normalizan a -14 LUFS: un clip mas bajo se oye mas
+    # bajo que todo lo demas del feed y el espectador sube el volumen o se va. Se mide
+    # el mp4 ya montado y se le aplica la ganancia que le falta.
+    render_target_lufs: float = -14.0
+    # Techo del pico real. -1 dBTP deja margen para el remuestreo de las plataformas.
+    render_peak_ceiling_db: float = -1.0
+    # Cuanto se deja pasar del techo, que lo recorta el limitador. Sin margen, un clip
+    # entero se queda 7 dB por debajo del objetivo por culpa de un solo golpe; con 4 dB
+    # ese golpe se comprime un poco y todo lo demas sube donde tiene que estar.
+    render_limiter_headroom_db: float = 4.0
+    # Topes de la correccion, por si la medida sale absurda (un clip casi en silencio).
+    render_gain_max_db: float = 12.0
+    render_gain_min_db: float = -6.0
+
     # --- Redes del streamer que se queman en el clip ---
     # Formato: "plataforma|etiqueta|url" separados por ";". Plataformas con logo:
     # twitch, youtube, tiktok.

@@ -259,6 +259,7 @@ async def main() -> None:
             # Se mide aqui: la copia del clip desaparece al salir de este bloque.
             if (tmp_clips / real_clip.name).exists():
                 scene2["audio"] = audio_start(tmp_clips / real_clip.name)
+                scene2["lufs"], _ = await render.measure_loudness(tmp_clips / real_clip.name)
     finally:
         await worker.stop()
         server.should_exit = True
@@ -337,6 +338,14 @@ async def main() -> None:
         check("el audio empieza con el clip", start < 0.05, f"{start:.3f}s")
         check("el audio dura lo que el video", abs(adur - vdur) < 0.15,
               f"audio {adur:.2f}s / video {vdur:.2f}s")
+        # Y a un volumen parecido al del resto del feed: los primeros clips salieron
+        # entre -18 y -25 LUFS y habia que subir los altavoces para oirlos. El margen de
+        # abajo es para los clips que topan con su propio pico antes de llegar al objetivo.
+        lufs = scene2.get("lufs")
+        objetivo = settings.render_target_lufs
+        check("sale al volumen de las redes",
+              lufs is not None and objetivo - 4.0 <= lufs <= objetivo + 1.0,
+              f"{lufs:.1f} LUFS (objetivo {objetivo:.0f})" if lufs else "sin medida")
         check("guarda el texto editado",
               bool(cues) and cues[0]["text"] == "PRUEBA",
               cues[0]["text"] if cues else "sin frases")

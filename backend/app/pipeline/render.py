@@ -523,7 +523,9 @@ async def render_clip(
         )
         audio_filters.append(
             f"[voice]{''.join(mixed)}amix=inputs={len(mixed) + 1}:duration=first:"
-            f"dropout_transition=0:normalize=0,alimiter=limit=0.97[aout]"
+            # `level=disabled`: sin eso `alimiter` no es un techo, es tambien un
+            # nivelador automatico, y va moviendo el volumen de la mezcla por su cuenta.
+            f"dropout_transition=0:normalize=0,alimiter=limit=0.97:level=disabled[aout]"
         )
         audio_map = "[aout]"
 
@@ -549,6 +551,7 @@ async def render_clip(
 
     if not out.exists() or out.stat().st_size < 4096:
         raise CommandFailed(cmd, 0, "ffmpeg no produjo un mp4 valido")
+    await normalize_loudness(out)
     if progress:
         await progress(1.0, "Clip listo")
     return RenderResult(
@@ -558,6 +561,90 @@ async def render_clip(
         sfx=len([m for m in mixed if m != "[music]"]), music=music_name,
         social=show_social,
     )
+
+
+def _last_float(pattern: str, text: str) -> float | None:
+    """El ultimo numero que casa. `ebur128` va escribiendo por fotograma y resume al final."""
+    found = re.findall(pattern, text)
+    if not found:
+        return None
+    try:
+        value = float(found[-1])
+    except ValueError:                       # "-inf" en un clip mudo
+        return None
+    return value if -120.0 < value < 20.0 else None
+
+
+async def measure_loudness(path: Path) -> tuple[float | None, float | None]:
+    """(LUFS integrados, pico real en dBFS) del mp4, medidos con EBU R128."""
+    r = await run(
+        [ffmpeg_bin(), "-hide_banner", "-nostdin", "-i", str(path),
+         "-af", "ebur128=peak=true", "-f", "null", "-"],
+        timeout=300,
+        check=False,
+    )
+    return (
+        _last_float(r"I:\s+(-?[\d.]+) LUFS", r.stderr),
+        _last_float(r"Peak:\s+(-?[\d.]+) dBFS", r.stderr),
+    )
+
+
+async def normalize_loudness(path: Path) -> float:
+    """Lleva el clip al volumen de referencia de las redes. Devuelve los dB que ha subido.
+
+    Se mide el mp4 ya montado y no la voz de origen: lo que se oye es la mezcla con la
+    musica y los efectos, y es esa la que tiene que quedar cerca de -14 LUFS, que es donde
+    normalizan TikTok, Instagram y YouTube. Un clip a -23 se oye la mitad de alto que el
+    resto del feed, y el que lo ve sube el volumen o se va.
+
+    Es una ganancia fija medida, no un compresor: no toca la dinamica de la mezcla. Lo
+    unico que la frena es el pico, porque subir 11 dB un clip cuyo golpe ya esta a -6
+    dBFS solo sirve para que el limitador lo machaque; se le deja pasar del techo lo que
+    diga `render_limiter_headroom_db` y el resto se cede. Sale barato: el video se copia
+    sin recodificar, asi que son un par de segundos.
+
+    (`loudnorm` haria esto en dos pasadas y en teoria mejor, pero en la practica se pasaba
+    del objetivo hasta 2 dB y dejaba picos por encima de 0 dBFS.)
+    """
+    lufs, peak = await measure_loudness(path)
+    if lufs is None:
+        log.warning("no se pudo medir el volumen de %s: se queda como esta", path.name)
+        return 0.0
+    gain = settings.render_target_lufs - lufs
+    if peak is not None:
+        room = settings.render_peak_ceiling_db - peak + settings.render_limiter_headroom_db
+        gain = min(gain, room)
+    gain = clamp(gain, settings.render_gain_min_db, settings.render_gain_max_db)
+    if abs(gain) < 0.5:
+        log.info("%s ya esta a %.1f LUFS", path.name, lufs)
+        return 0.0
+
+    # El limitador mira la muestra y el techo es de pico real, que el codificador AAC se
+    # salta por arriba: sin este margen de 1 dB el mp4 sale pegado a 0 dBFS.
+    limit = 10 ** ((settings.render_peak_ceiling_db - 1.0) / 20)
+    tmp = path.with_suffix(".norm.mp4")
+    cmd = [
+        ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
+        "-i", str(path),
+        "-map", "0:v", "-map", "0:a",
+        "-c:v", "copy",
+        "-af", f"volume={gain:.2f}dB,alimiter=limit={limit:.4f}:level=disabled",
+        "-c:a", "aac", "-b:a", "160k", "-ac", "2",
+        "-movflags", "+faststart",
+        str(tmp),
+    ]
+    try:
+        await run(cmd, timeout=settings.render_timeout_s)
+    except CommandFailed:
+        tmp.unlink(missing_ok=True)
+        log.warning("no se pudo normalizar %s: se queda a %.1f LUFS", path.name, lufs)
+        return 0.0
+    if not tmp.exists() or tmp.stat().st_size < 4096:
+        tmp.unlink(missing_ok=True)
+        return 0.0
+    tmp.replace(path)
+    log.info("%s: %.1f LUFS %+.1f dB -> %.1f LUFS", path.name, lufs, gain, lufs + gain)
+    return gain
 
 
 def have_render_deps() -> bool:
