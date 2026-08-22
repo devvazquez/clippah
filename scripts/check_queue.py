@@ -207,6 +207,8 @@ async def main() -> None:
         scene1 = {
             "objects": dict(fake.objects),
             "storage_path": fake.clips[0]["storage_path"] if fake.clips else "",
+            "poster_path": fake.clips[0].get("poster_path") if fake.clips else "",
+            "video_date": fake.clips[0].get("video_date") if fake.clips else "",
         }
         # --- segunda escena: desde la interfaz se corrige una frase, se cambia la
         #     musica y se coloca un efecto a mano
@@ -261,6 +263,13 @@ async def main() -> None:
         check("apunta al objeto subido",
               scene1["storage_path"] == f"{REQUEST_ID}/{moment_id}.mp4",
               str(scene1["storage_path"]))
+        # La tarjeta del directo necesita las dos cosas: una portada y una fecha.
+        check("sube la portada del clip",
+              f"clips/{REQUEST_ID}/{moment_id}.jpg" in scene1["objects"]
+              and scene1["poster_path"] == f"{REQUEST_ID}/{moment_id}.jpg",
+              str(scene1["poster_path"]))
+        check("guarda la fecha del directo", bool(scene1["video_date"]),
+              str(scene1["video_date"]))
     print("\nSubtitulos corregidos -> re-render")
     if not fake.clips:
         check("hay un clip que editar", False)
@@ -276,7 +285,13 @@ async def main() -> None:
         check("el objeto nuevo esta subido",
               f"clips/{clip.get('storage_path')}" in fake.objects,
               ", ".join(fake.objects))
-        check("el objeto viejo se borra", len(fake.objects) == 1, str(len(fake.objects)))
+        check("el objeto viejo se borra",
+              f"clips/{scene1['storage_path']}" not in fake.objects,
+              ", ".join(fake.objects))
+        # La portada no cambia al rehacer el clip: es la misma foto y la misma ruta.
+        check("la portada sobrevive al re-render",
+              f"clips/{clip.get('poster_path')}" in fake.objects,
+              str(clip.get("poster_path")))
         check("guarda el texto editado",
               bool(cues) and cues[0]["text"] == "PRUEBA",
               cues[0]["text"] if cues else "sin frases")
