@@ -98,6 +98,13 @@ alter table public.clips add column if not exists render_status   text not null 
 alter table public.clips add column if not exists render_error    text;
 alter table public.clips add column if not exists version         int not null default 1;
 
+-- Portada de las tarjetas de la galeria: la miniatura del momento (jpg 640x360, ~30 kB)
+-- vive en el mismo bucket que el mp4. `video_date` es la fecha del directo (AAAAMMDD):
+-- con todos los directos del canal titulados igual, es lo que distingue una tarjeta de
+-- otra.
+alter table public.clips add column if not exists poster_path text;
+alter table public.clips add column if not exists video_date  text;
+
 do $$
 begin
   if not exists (
@@ -204,9 +211,10 @@ create policy "anon lee los clips" on public.clips
 -- ------------------------------------------------------------------- storage
 -- Bucket privado: los mp4 se sirven con URLs firmadas que caducan, no con enlaces
 -- eternos. La interfaz las pide con la clave anon, asi que hace falta darle lectura
--- sobre los objetos del bucket.
+-- sobre los objetos del bucket. Los jpg son las portadas de las tarjetas, que viven al
+-- lado de su mp4.
 insert into storage.buckets (id, name, public, file_size_limit, allowed_mime_types)
-values ('clips', 'clips', false, 209715200, array['video/mp4'])
+values ('clips', 'clips', false, 209715200, array['video/mp4', 'image/jpeg'])
 on conflict (id) do update
   set file_size_limit = excluded.file_size_limit,
       allowed_mime_types = excluded.allowed_mime_types;

@@ -49,8 +49,10 @@ export default function Page() {
     try {
       const rows = await listClips();
       setClips(rows);
-      // Las URLs firmadas caducan, asi que se piden con cada refresco de la lista.
-      const signed = await signClips(rows.map((c) => c.storage_path));
+      // Las URLs firmadas caducan, asi que se piden con cada refresco de la lista. Los
+      // mp4 y las portadas van en la misma tanda: son el mismo bucket y una sola llamada.
+      const paths = rows.flatMap((c) => (c.poster_path ? [c.storage_path, c.poster_path] : [c.storage_path]));
+      const signed = await signClips(paths);
       setUrls((prev) => ({ ...prev, ...signed }));
     } catch (err) {
       toast.error(err instanceof Error ? err.message : "No se pudieron leer los clips");

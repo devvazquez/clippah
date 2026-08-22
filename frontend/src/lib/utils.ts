@@ -46,6 +46,18 @@ export function relativeDate(epochSeconds: number): string {
   });
 }
 
+/** `20260822` → `22 ago 2026`. Con todos los directos titulados igual, es la etiqueta. */
+export function streamDate(raw: string | null | undefined): string {
+  const m = /^(\d{4})(\d{2})(\d{2})$/.exec((raw ?? "").trim());
+  if (!m) return "";
+  const [, y, mo, d] = m;
+  return new Date(Number(y), Number(mo) - 1, Number(d)).toLocaleDateString("es-ES", {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+  });
+}
+
 export function scoreTone(score: number): { text: string; ring: string; dot: string } {
   if (score >= 0.75) return { text: "text-ok", ring: "ring-ok/30", dot: "bg-ok" };
   if (score >= 0.5) return { text: "text-accent-soft", ring: "ring-accent/30", dot: "bg-accent" };

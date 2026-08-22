@@ -83,6 +83,13 @@ directamente: comparten un proyecto de Supabase.
 - **El backend sondea cada 2 s** (`SUPABASE_POLL_S`). Un `GET` de una fila cada dos
   segundos sale más barato en complejidad que mantener vivo un websocket de Phoenix dentro
   del backend, y la diferencia no se nota.
+- **La galería tiene dos niveles: directos y clips.** Primero una tarjeta por directo, con
+  una miniatura del propio directo, su fecha y cuántos clips tiene; al pulsarla salen sus
+  clips ordenados por puntuación, el mejor primero. Es el orden en que se decide qué subir:
+  de qué directo tiro y luego cuál de sus momentos. No hay tabla de directos, se agrupan por
+  el VOD del que salen (`src/lib/streams.ts`): un directo *es* el conjunto de sus clips. La
+  miniatura es el fotograma del momento, que ya se saca durante el análisis, y sube al mismo
+  bucket que el mp4 (`poster_path`, ~30 kB).
 - **Los clips se sirven desde Storage** con URLs firmadas de 12 h. El botón de descarga usa
   `?download=<nombre>`, que hace que Storage mande `Content-Disposition: attachment`: el
   mp4 se guarda con un nombre legible en vez de abrirse en una pestaña.
@@ -127,7 +134,9 @@ token no se guarda en ningún fichero. A mano son los mismos pasos:
 4. `make export` → interfaz estática en `frontend/out`. `make dev` levanta el backend con
    el worker de la cola ya en marcha; `GET /api/queue/status` dice si conectó.
 5. Opcional: `python scripts/push_clips.py` sube a Supabase los clips que ya estén
-   renderizados en disco, para que la interfaz los vea sin volver a generarlos.
+   renderizados en disco, para que la interfaz los vea sin volver a generarlos, y
+   `python scripts/backfill_posters.py` les pone la miniatura y la fecha del directo a los
+   que se subieran antes de que las tarjetas existieran.
 
 Sin las dos variables del backend, el worker no arranca y todo lo demás funciona igual que
 antes. Sin las dos del frontend, la interfaz lo dice en pantalla en vez de romperse.

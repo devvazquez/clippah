@@ -58,6 +58,9 @@ export interface Clip {
   height: number;
   video_url: string | null;
   video_title: string | null;
+  /** Fecha del directo (AAAAMMDD) y portada del clip en el bucket, para las tarjetas. */
+  video_date: string | null;
+  poster_path: string | null;
   t_start: number | null;
   t_end: number | null;
   score: number | null;

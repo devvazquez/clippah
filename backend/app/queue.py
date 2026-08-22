@@ -365,7 +365,8 @@ class QueueWorker:
             return 0
         video = db.row_to_dict(
             await db.fetch_one(
-                "SELECT url, title FROM videos WHERE id=?", (moments[0]["video_id"],)
+                "SELECT url, title, upload_date FROM videos WHERE id=?",
+                (moments[0]["video_id"],),
             )
         )
         done = 0
@@ -390,17 +391,43 @@ class QueueWorker:
                 **moment,
                 "video_url": video.get("url"),
                 "video_title": video.get("title"),
+                "video_date": video.get("upload_date"),
             }
             await sb.upload(storage_path, path.read_bytes(), content_type="video/mp4")
-            await sb.insert(CLIPS, _clip_row(request_id, enriched, clip, storage_path),
-                            upsert_on="moment_id")
+            poster = await upload_poster(sb, request_id, moment)
+            await sb.insert(
+                CLIPS,
+                _clip_row(request_id, enriched, clip, storage_path, poster),
+                upsert_on="moment_id",
+            )
             done += 1
             await self._patch(sb, request_id, {"clips_done": done})
         return done
 
 
+async def upload_poster(
+    sb: Supabase, folder: str | None, moment: dict[str, Any]
+) -> str | None:
+    """Sube la miniatura del momento al lado del mp4: es la portada de las tarjetas.
+
+    Se nombra por el momento y no por el mp4, que cambia de nombre en cada re-render: la
+    portada es la misma foto siempre, y asi no se acumulan jpg huerfanos.
+    """
+    thumb = Path(str(moment.get("thumb_path") or ""))
+    if not thumb.exists():
+        log.warning("%s no tiene miniatura en disco", moment["id"])
+        return None
+    poster = f"{folder or 'manual'}/{moment['id']}.jpg"
+    await sb.upload(poster, thumb.read_bytes(), content_type="image/jpeg")
+    return poster
+
+
 def _clip_row(
-    request_id: str | None, moment: dict[str, Any], clip: ClipOut, storage_path: str
+    request_id: str | None,
+    moment: dict[str, Any],
+    clip: ClipOut,
+    storage_path: str,
+    poster_path: str | None = None,
 ) -> dict[str, Any]:
     """Fila de `clips` a partir del momento local y del resultado del render."""
     return {
@@ -415,6 +442,8 @@ def _clip_row(
         "height": int(clip.height),
         "video_url": str(moment.get("video_url") or ""),
         "video_title": str(moment.get("video_title") or ""),
+        "video_date": str(moment.get("video_date") or "") or None,
+        "poster_path": poster_path,
         "t_start": float(moment.get("t_start") or 0.0),
         "t_end": float(moment.get("t_end") or 0.0),
         "score": float(moment.get("final_score") or 0.0),
@@ -450,7 +479,12 @@ async def publish_existing(
             log.warning("%s no tiene clip renderizado en disco", moment_id)
             continue
         clip = await service.render_moment_clip(moment_id)   # reutiliza el mp4 existente
-        moment = {**moment, "video_url": video.get("url"), "video_title": video.get("title")}
+        moment = {
+            **moment,
+            "video_url": video.get("url"),
+            "video_title": video.get("title"),
+            "video_date": video.get("upload_date"),
+        }
 
         existing = await sb.select(CLIPS, params={
             "select": "id,storage_path,version,request_id",
@@ -464,10 +498,12 @@ async def publish_existing(
             keep_request = existing[0].get("request_id") or request_id
         else:
             old_path, version, keep_request = "", 1, request_id
-            storage_path = f"{request_id or 'manual'}/{moment_id}.mp4"
+            folder = request_id or "manual"
+            storage_path = f"{folder}/{moment_id}.mp4"
 
         await sb.upload(storage_path, path.read_bytes(), content_type="video/mp4")
-        row = _clip_row(keep_request, moment, clip, storage_path)
+        poster = await upload_poster(sb, folder, moment)
+        row = _clip_row(keep_request, moment, clip, storage_path, poster)
         row["version"] = version
         await sb.insert(CLIPS, row, upsert_on="moment_id")
         if old_path and old_path != storage_path:
