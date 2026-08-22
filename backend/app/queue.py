@@ -49,10 +49,14 @@ def _worker_name() -> str:
 class QueueWorker:
     """Un solo consumidor de la cola, atado al ciclo de vida del backend."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, drain: bool = False) -> None:
         self._task: asyncio.Task[None] | None = None
         self._stop = asyncio.Event()
         self.last_error = ""
+        # En modo `drain` el worker no se queda esperando trabajo nuevo: procesa lo que
+        # hay y termina. Es lo que necesita un turno programado, que no puede quedarse
+        # abierto para siempre.
+        self._drain = drain
 
     # -------------------------------------------------------------- ciclo de vida
 
@@ -76,20 +80,34 @@ class QueueWorker:
     def running(self) -> bool:
         return bool(self._task and not self._task.done())
 
+    async def wait(self) -> None:
+        """Espera a que el bucle termine solo. Solo pasa en modo `drain`."""
+        if self._task:
+            with contextlib.suppress(asyncio.CancelledError):
+                await self._task
+
     # ------------------------------------------------------------------- el bucle
 
     async def _run(self) -> None:
         sb = Supabase()
         try:
             await self._requeue_orphans(sb)
+            fallos = 0
             while not self._stop.is_set():
                 try:
                     request = await self._claim(sb)
                 except (SupabaseError, httpx.HTTPError) as exc:
                     self.last_error = str(exc)[:300]
                     log.warning("no se pudo leer la cola: %s", exc)
+                    fallos += 1
+                    # El backend de siempre reintenta indefinidamente, que es lo suyo
+                    # cuando esta encendido. El turno programado se rinde y deja el aviso.
+                    if self._drain and fallos >= 3:
+                        log.error("la cola no responde: el turno programado se rinde")
+                        return
                     await self._sleep(min(30.0, settings.supabase_poll_s * 5))
                     continue
+                fallos = 0
                 if request is not None:
                     self.last_error = ""
                     await self._process(sb, request)
@@ -98,6 +116,9 @@ class QueueWorker:
                 # subtitulos de un clip ya hecho.
                 clip = await self._claim_rerender(sb)
                 if clip is None:
+                    if self._drain:
+                        log.info("cola vacia: el turno programado termina")
+                        return
                     await self._sleep(settings.supabase_poll_s)
                     continue
                 self.last_error = ""

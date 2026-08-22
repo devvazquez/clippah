@@ -13,7 +13,7 @@ BACKEND_PORT ?= 8000
 FRONTEND_PORT ?= 3000
 
 .DEFAULT_GOAL := help
-.PHONY: help setup setup-backend setup-frontend setup-font setup-local dev backend frontend export check check-queue lint typecheck fmt clean clean-data doctor
+.PHONY: help setup setup-backend setup-frontend setup-font setup-local dev backend frontend export check check-queue drain lint typecheck fmt clean clean-data doctor doctor-backend
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -81,6 +81,10 @@ check: lint typecheck ## ruff check + tsc --noEmit
 check-queue: ## Prueba el worker de la cola contra un Supabase de mentira
 	$(PYBIN)/python scripts/check_queue.py
 
+drain: ## Procesa lo que haya en la cola de Supabase y termina (el turno programado)
+	@$(MAKE) --no-print-directory doctor-backend
+	$(PYBIN)/python scripts/drain.py
+
 lint: ## ruff check del backend y de scripts/
 	$(PYBIN)/ruff check --config backend/pyproject.toml backend scripts
 
@@ -90,11 +94,13 @@ typecheck: ## tsc --noEmit del frontend
 fmt: ## ruff format + fix
 	$(PYBIN)/ruff check --config backend/pyproject.toml --fix backend scripts
 
-doctor: ## Comprueba que ffmpeg/ffprobe y el venv estan disponibles
+doctor: doctor-backend ## Comprueba que ffmpeg/ffprobe y las dependencias estan disponibles
+	@test -d frontend/node_modules || { echo "FALTAN dependencias del frontend: ejecuta 'make setup'"; exit 1; }
+
+doctor-backend: ## Solo lo que necesita el motor: ffmpeg, ffprobe y el venv
 	@command -v ffmpeg  >/dev/null || { echo "FALTA ffmpeg (apt install ffmpeg / brew install ffmpeg)"; exit 1; }
 	@command -v ffprobe >/dev/null || { echo "FALTA ffprobe (viene con ffmpeg)"; exit 1; }
-	@test -x $(PYBIN)/python || { echo "FALTA el venv del backend: ejecuta 'make setup'"; exit 1; }
-	@test -d frontend/node_modules || { echo "FALTAN dependencias del frontend: ejecuta 'make setup'"; exit 1; }
+	@test -x $(PYBIN)/python || { echo "FALTA el venv del backend: ejecuta 'make setup-backend'"; exit 1; }
 
 clean: ## Borra caches de build
 	rm -rf frontend/.next backend/.ruff_cache

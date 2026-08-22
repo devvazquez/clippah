@@ -53,6 +53,7 @@ ninguna clave la app funciona igual, solo más lenta y con títulos menos ricos.
 | `make check` | `ruff check` + `tsc --noEmit` |
 | `make export` | Construye la interfaz estática en `frontend/out` |
 | `make check-queue` | Prueba el puente con Supabase contra un servidor de mentira |
+| `make drain` | Un turno: procesa lo que haya en la cola y termina |
 | `make doctor` | Comprueba ffmpeg/ffprobe y las dependencias |
 | `make setup-emoji` | Baja el artwork de emojis de Apple para los títulos |
 | `make setup-font` | Baja Montserrat (título) y Barlow (subtítulos) |
@@ -142,6 +143,33 @@ token no se guarda en ningún fichero. A mano son los mismos pasos:
 
 Sin las dos variables del backend, el worker no arranca y todo lo demás funciona igual que
 antes. Sin las dos del frontend, la interfaz lo dice en pantalla en vez de romperse.
+
+### El turno programado
+
+La cola aguanta sola, pero alguien tiene que vaciarla, y la sandbox donde corre el motor
+no está encendida siempre. Para eso está `make drain`: procesa lo que haya —análisis
+pendientes y clips por rehacer— y **termina cuando la cola queda vacía**, en vez de
+quedarse esperando como `make dev`. Es el mismo worker con `drain=True`.
+
+```bash
+make drain      # un turno: se come lo pendiente y sale
+```
+
+Así se puede colgar de un temporizador (un Routine de Claude Code, un cron en un VPS, lo
+que sea) que cada pocas horas arranque una máquina, ejecute eso y la apague. Dos cosas que
+importan de ese entorno:
+
+- **Las claves tienen que estar en el entorno**, no en `backend/.env`: ese fichero está en
+  `.gitignore`, así que un contenedor recién clonado no lo tiene. Como mínimo
+  `SUPABASE_URL` y `SUPABASE_SERVICE_KEY`; sin ellas `drain` lo dice y sale con código 2 en
+  vez de quedarse callado. `GROQ_API_KEY` y `GEMINI_API_KEY` son opcionales (sin ellas el
+  análisis funciona en modo local: más lento y con títulos peores).
+- **Que la máquina traiga `ffmpeg`** y, si el venv no está, `make setup-backend setup-font`
+  antes. `make drain` comprueba las dos cosas y aborta con un mensaje claro.
+
+Si el temporizador falla o nadie lo monta, no se pierde nada: las peticiones se quedan en
+`clip_requests` esperando, y lo que hubiera quedado a medias en un contenedor reciclado se
+devuelve a la cola al arrancar el siguiente (`_requeue_orphans`).
 
 ### La clave anon es pública
 
