@@ -14,7 +14,10 @@ sustituye por un job ya terminado de la base local y el render sale de la cache 
 from __future__ import annotations
 
 import asyncio
+import shutil
+import subprocess
 import sys
+import tempfile
 from pathlib import Path
 from typing import Any
 
@@ -24,6 +27,8 @@ sys.path.insert(0, str(BACKEND))
 import uvicorn  # noqa: E402
 from app import db, queue, service  # noqa: E402
 from app.config import settings  # noqa: E402
+from app.pipeline import render  # noqa: E402
+from app.utils import ffprobe_bin  # noqa: E402
 from fastapi import FastAPI, Request, Response  # noqa: E402
 
 PORT = 8799
@@ -129,6 +134,21 @@ async def healthz() -> Response:
     return Response(status_code=204)
 
 
+def audio_start(path: Path) -> tuple[float, float, float]:
+    """(inicio del audio, duracion del audio, duracion del video) de un mp4, en segundos."""
+    def probe(stream: str, fields: str) -> list[str]:
+        out = subprocess.run(
+            [ffprobe_bin(), "-v", "error", "-select_streams", stream,
+             "-show_entries", f"stream={fields}", "-of", "csv=p=0", str(path)],
+            capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        return out.split(",")
+
+    a = probe("a:0", "start_time,duration")
+    v = probe("v:0", "duration")
+    return float(a[0]), float(a[1]), float(v[0])
+
+
 # ------------------------------------------------------------------- la prueba
 
 
@@ -182,6 +202,15 @@ async def main() -> None:
 
     service.submit_job = fake_submit  # type: ignore[assignment]
 
+    # El re-render escribe el mp4 donde vive el del clip de verdad, asi que la prueba
+    # dejaba en disco un clip de la galeria con los subtitulos "PRUEBA" quemados. Se le
+    # cambia la carpeta por una temporal, con una copia dentro para que la primera escena
+    # siga saliendo de la cache.
+    real_clip = render.clip_path(moment_id)
+    tmp_clips = Path(tempfile.mkdtemp(prefix="clipper-check-"))
+    shutil.copy2(real_clip, tmp_clips / real_clip.name)
+    render.clips_dir = lambda: tmp_clips  # type: ignore[assignment]
+
     config = uvicorn.Config(stub, host="127.0.0.1", port=PORT, log_level="warning")
     server = uvicorn.Server(config)
     serving = asyncio.create_task(server.serve())
@@ -199,6 +228,7 @@ async def main() -> None:
     worker = queue.QueueWorker()
     await worker.start()
     scene1: dict[str, Any] = {}
+    scene2: dict[str, Any] = {}
     try:
         await until(lambda: fake.clip_requests[0]["status"] in ("done", "error"))
         # Foto de como quedo la primera escena: la segunda reemplaza el objeto y la ruta,
@@ -226,11 +256,20 @@ async def main() -> None:
             clip["render_status"] = "rerender_queued"
             await until(lambda: clip.get("render_status") in ("ready", "error")
                         and clip.get("storage_path") != first_path)
+            # Se mide aqui: la copia del clip desaparece al salir de este bloque.
+            if (tmp_clips / real_clip.name).exists():
+                scene2["audio"] = audio_start(tmp_clips / real_clip.name)
     finally:
         await worker.stop()
         server.should_exit = True
         await serving
+        # La base apuntaba al clip de verdad y el render la ha movido a la copia: se
+        # devuelve antes de borrarla, que si no queda apuntando a un fichero que no esta.
+        await db.execute(
+            "UPDATE moments SET clip_path=? WHERE id=?", (str(real_clip), moment_id)
+        )
         await db.close()
+        shutil.rmtree(tmp_clips, ignore_errors=True)
 
     request = fake.clip_requests[0]
     stages = [p["stage"] for p in fake.patches if "stage" in p]
@@ -292,6 +331,12 @@ async def main() -> None:
         check("la portada sobrevive al re-render",
               f"clips/{clip.get('poster_path')}" in fake.objects,
               str(clip.get("poster_path")))
+        # El audio tiene que empezar en 0 y durar lo que el video: el clip salia con el
+        # primer segundo mudo cuando la busqueda del `-ss` caia en un limite de segmento.
+        start, adur, vdur = scene2.get("audio") or (9.0, 0.0, 0.0)
+        check("el audio empieza con el clip", start < 0.05, f"{start:.3f}s")
+        check("el audio dura lo que el video", abs(adur - vdur) < 0.15,
+              f"audio {adur:.2f}s / video {vdur:.2f}s")
         check("guarda el texto editado",
               bool(cues) and cues[0]["text"] == "PRUEBA",
               cues[0]["text"] if cues else "sin frases")

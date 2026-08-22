@@ -32,6 +32,12 @@ OUT_W, OUT_H = 1080, 1920
 # Los subtitulos se colocan por encima de este margen inferior: ahi van el texto del
 # post, el @ del autor y los botones de la plataforma.
 SUB_MARGIN_V = 300
+# Cuanto se empieza a decodificar antes del momento. La busqueda rapida (`-ss` antes de
+# `-i`) cae en el limite de un segmento, y en HLS el primer paquete de audio de ese
+# segmento puede llegar un segundo largo despues del primer fotograma: el clip salia con
+# el audio entrando tarde. Se decodifica un poco antes y el corte exacto lo hacen `trim` y
+# `atrim`, que cortan los dos por el mismo reloj.
+SEEK_PAD_S = 6.0
 # Un 16:9 a lo ancho de un 9:16 solo da 608 px de alto: queda un tercio de lienzo. El
 # bloque se centra ligeramente por encima del medio y el subtitulo se pega justo debajo,
 # para que la composicion se lea como intencionada y no como un video perdido en el
@@ -286,14 +292,18 @@ def build_ass(
     return head + "\n".join(lines) + "\n"
 
 
-def _layout_filters(layout: str, opts: RenderOptions) -> list[str]:
-    """Cadena de filtros que lleva el 16:9 de origen a 1080x1920."""
+def _layout_filters(layout: str, opts: RenderOptions, src: str = "[0:v]") -> list[str]:
+    """Cadena de filtros que lleva el 16:9 de origen a 1080x1920.
+
+    `src` es la etiqueta de entrada: el render recorta antes por filtros y le pasa la
+    suya, para no depender de que la busqueda del `-ss` caiga fina.
+    """
     if layout == "crop":
         # Recorte 9:16 del propio fotograma. Encuadra lo que interesa, pero se come lo
         # que quede fuera (incluida la webcam si esta en una esquina).
         fx = clamp(opts.focus_x, 0.0, 1.0)
         return [
-            f"[0:v]crop=w=ih*9/16:h=ih:x='(iw-ih*9/16)*{fx:.3f}':y=0,"
+            f"{src}crop=w=ih*9/16:h=ih:x='(iw-ih*9/16)*{fx:.3f}':y=0,"
             f"scale={OUT_W}:{OUT_H}:flags=lanczos,setsar=1[comp]"
         ]
 
@@ -303,7 +313,7 @@ def _layout_filters(layout: str, opts: RenderOptions) -> list[str]:
         cam_h = int(OUT_H * 0.38) // 2 * 2
         game_h = OUT_H - cam_h
         return [
-            "[0:v]split=2[cam][game]",
+            f"{src}split=2[cam][game]",
             f"[cam]crop=w=iw*{w:.4f}:h=ih*{h:.4f}:x=iw*{x:.4f}:y=ih*{y:.4f},"
             f"scale={OUT_W}:{cam_h}:flags=lanczos,setsar=1[camv]",
             f"[game]crop=w=ih*9/16:h=ih:x='(iw-ih*9/16)*0.5':y=0,"
@@ -346,7 +356,7 @@ def _layout_filters(layout: str, opts: RenderOptions) -> list[str]:
             cx = gx0 + (safe_w - crop_w) / 2
             cy = clamp(0.46 - crop_h / 2, 0.0, 1.0 - crop_h)
             return [
-                "[0:v]split=3[ct][cg][cb]",
+                f"{src}split=3[ct][cg][cb]",
                 f"[ct]crop=w=iw*{tw:.4f}:h=ih*{th:.4f}:x=iw*{tx:.4f}:y=ih*{ty:.4f},"
                 f"scale={OUT_W}:{band}:force_original_aspect_ratio=increase:flags=lanczos,"
                 f"crop={OUT_W}:{band}:0:'(ih-{band})*{anchor:.3f}',setsar=1[topv]",
@@ -362,7 +372,7 @@ def _layout_filters(layout: str, opts: RenderOptions) -> list[str]:
     # blur (por defecto): el 16:9 completo a lo ancho, sobre una copia ampliada y
     # desenfocada de si mismo. No pierde nada del fotograma original.
     return [
-        "[0:v]split=2[bg][fg]",
+        f"{src}split=2[bg][fg]",
         f"[bg]scale={OUT_W}:{OUT_H}:force_original_aspect_ratio=increase,"
         f"crop={OUT_W}:{OUT_H},gblur=sigma={settings.render_blur_sigma},"
         f"eq=brightness=-0.06:saturation=0.85,setsar=1[bgv]",
@@ -408,7 +418,15 @@ async def render_clip(
         max_words=settings.render_words_per_line,
         max_chars=settings.render_chars_per_line,
     )
-    filters = _layout_filters(layout, opts)
+    # Todo lo que sigue cuenta desde el momento: `trim`/`atrim` cortan por el mismo reloj
+    # (el del origen) y se le resta el mismo desplazamiento, asi que imagen y sonido
+    # empiezan juntos aunque la busqueda haya caido antes.
+    pad = min(SEEK_PAD_S, t_start)
+    filters = [
+        f"[0:v]trim=start={pad:.3f}:duration={duration:.3f},"
+        f"setpts=PTS-{pad:.3f}/TB[src]",
+        *_layout_filters(layout, opts, "[src]"),
+    ]
     last = "[comp]"
 
     inputs: list[str] = []
@@ -459,8 +477,15 @@ async def render_clip(
 
     # --- audio: voz original + riser hasta el pico + golpe en el pico ---
     sfx = opts.sfx
-    audio_map = "0:a?"
-    audio_filters: list[str] = []
+    audio_map = "[srca]"
+    audio_filters: list[str] = [
+        # `first_pts=0` rellena con silencio si al origen le falta el principio, en vez de
+        # adelantar lo que haya (que descuadraria la voz con la imagen); `apad` mas el
+        # `atrim` final dejan la pista con la duracion exacta del clip.
+        f"[0:a]atrim=start={pad:.3f}:duration={duration:.3f},"
+        f"asetpts=PTS-{pad:.3f}/TB,aresample=async=1:first_pts=0,"
+        f"apad,atrim=0:{duration:.3f}[srca]"
+    ]
     mixed = []
     for cue in sfx:
         path = settings.sfx_dir / cue.name
@@ -493,8 +518,8 @@ async def render_clip(
 
     if mixed:
         audio_filters.insert(
-            0,
-            "[0:a]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[voice]",
+            1,
+            "[srca]aformat=sample_fmts=fltp:sample_rates=48000:channel_layouts=stereo[voice]",
         )
         audio_filters.append(
             f"[voice]{''.join(mixed)}amix=inputs={len(mixed) + 1}:duration=first:"
@@ -504,7 +529,7 @@ async def render_clip(
 
     cmd = [
         ffmpeg_bin(), "-hide_banner", "-loglevel", "error", "-nostdin", "-y",
-        "-ss", f"{t_start:.3f}", "-t", f"{duration:.3f}", "-i", source,
+        "-ss", f"{t_start - pad:.3f}", "-t", f"{duration + pad + 1.0:.3f}", "-i", source,
         *inputs,
         "-filter_complex", ";".join([*filters, *audio_filters]),
         "-map", last, "-map", audio_map,
