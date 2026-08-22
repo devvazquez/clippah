@@ -138,6 +138,85 @@ async def load_moment(moment_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
     return moment, video
 
 
+def rerender_spec(moment: dict[str, Any], video: dict[str, Any]) -> dict[str, Any]:
+    """Todo lo que hace falta para volver a quemar este clip en una maquina limpia.
+
+    Se guarda en Supabase junto al clip porque la base local no viaja: esta en
+    `backend/data/`, que no se versiona. Sin esto, un re-render pedido desde la interfaz
+    solo funciona en la maquina que hizo el analisis, y el turno programado (que arranca
+    en un contenedor recien clonado) no puede atenderlo.
+
+    Son los campos de las dos filas que el render lee, no las filas enteras: ni el chat,
+    ni las senales, ni el transcript hacen falta para volver a montar el mp4.
+    """
+    return {
+        "video": {
+            "id": str(video["id"]),
+            "platform": str(video.get("platform") or "twitch"),
+            "ext_id": str(video.get("ext_id") or ""),
+            "url": str(video.get("url") or ""),
+            "title": str(video.get("title") or ""),
+            "duration": float(video.get("duration") or 0.0),
+            "upload_date": str(video.get("upload_date") or ""),
+            # El recorte de las camaras: volver a detectarlo cuesta minuto y medio de
+            # video y puede salir distinto, asi que se lleva medido.
+            "cam_layout": video.get("cam_layout"),
+        },
+        "moment": {
+            "id": str(moment["id"]),
+            "video_id": str(moment["video_id"]),
+            "t_start": float(moment["t_start"]),
+            "t_end": float(moment["t_end"]),
+            "t_peak": float(moment.get("t_peak") or moment["t_start"]),
+            "title": str(moment.get("title") or ""),
+            "clip_title": str(moment.get("clip_title") or ""),
+            "enriched": int(moment.get("enriched") or 0),
+            "music": str(moment.get("music") or "ninguna"),
+            "sfx_fit": str(moment.get("sfx_fit") or "ninguno"),
+            "rank": int(moment.get("rank") or 0),
+        },
+    }
+
+
+async def ensure_moment(moment_id: str, spec: dict[str, Any] | None) -> None:
+    """Se asegura de que el momento y su video estan en la base local.
+
+    En la maquina que hizo el analisis ya estan. En un contenedor nuevo la base viene
+    vacia, y entonces se reconstruyen desde la ficha que se guardo en Supabase: con eso
+    el render sigue el mismo camino de siempre, sin ramas paralelas.
+    """
+    if await db.fetch_one("SELECT id FROM moments WHERE id=?", (moment_id,)):
+        return
+    if not spec or not spec.get("moment") or not spec.get("video"):
+        raise NotFound(
+            "Momento no encontrado y el clip no trae la ficha de render: solo se puede "
+            "rehacer en la maquina que hizo el analisis"
+        )
+    v, m = dict(spec["video"]), dict(spec["moment"])
+    now = time.time()
+    await db.execute(
+        """INSERT OR REPLACE INTO videos
+               (id, platform, ext_id, url, title, duration, upload_date, cam_layout,
+                created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (v["id"], v.get("platform") or "twitch", v.get("ext_id") or "", v.get("url") or "",
+         v.get("title") or "", float(v.get("duration") or 0.0), v.get("upload_date") or "",
+         v.get("cam_layout"), now),
+    )
+    await db.execute(
+        """INSERT OR REPLACE INTO moments
+               (id, job_id, video_id, t_start, t_end, t_peak, title, clip_title,
+                enriched, music, sfx_fit, rank, created_at)
+           VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+        (m["id"], f"spec-{m['id']}", m["video_id"], float(m["t_start"]), float(m["t_end"]),
+         float(m.get("t_peak") or m["t_start"]), m.get("title") or "",
+         m.get("clip_title") or "", int(m.get("enriched") or 0),
+         m.get("music") or "ninguna", m.get("sfx_fit") or "ninguno",
+         int(m.get("rank") or 0), now),
+    )
+    log.info("momento %s reconstruido desde la ficha de render", moment_id)
+
+
 def _cues(raw: list[dict[str, Any]]) -> list[render.SubtitleCue]:
     """Frases guardadas -> frases de render, saneando tiempos y texto."""
     out = []

@@ -105,6 +105,14 @@ alter table public.clips add column if not exists version         int not null d
 alter table public.clips add column if not exists poster_path text;
 alter table public.clips add column if not exists video_date  text;
 
+-- Ficha para volver a quemar el clip en una maquina que no hizo el analisis: de que VOD
+-- sale, en que segundos, con que titulo y donde estan las webcams. La base local vive en
+-- `backend/data/` y no se versiona, asi que un contenedor recien clonado (el turno
+-- programado) no sabe nada del momento; con esto lo reconstruye y el render sigue el
+-- camino de siempre. La clave anon no la puede escribir: no esta entre las columnas que
+-- se le conceden mas abajo.
+alter table public.clips add column if not exists render_spec jsonb;
+
 do $$
 begin
   if not exists (

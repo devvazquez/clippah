@@ -525,7 +525,11 @@ async def render_clip(
             f"[voice]{''.join(mixed)}amix=inputs={len(mixed) + 1}:duration=first:"
             # `level=disabled`: sin eso `alimiter` no es un techo, es tambien un
             # nivelador automatico, y va moviendo el volumen de la mezcla por su cuenta.
-            f"dropout_transition=0:normalize=0,alimiter=limit=0.97:level=disabled[aout]"
+            # El techo va a -2 dBFS y no pegado a 1: del nivel final ya se encarga
+            # `normalize_loudness`, y una mezcla que sale rozando el maximo acaba con el
+            # pico real por encima de 0 (el pico entre muestras y el AAC se salen por
+            # arriba de lo que ve el limitador).
+            f"dropout_transition=0:normalize=0,alimiter=limit=0.79:level=disabled[aout]"
         )
         audio_map = "[aout]"
 
@@ -615,12 +619,36 @@ async def normalize_loudness(path: Path) -> float:
         room = settings.render_peak_ceiling_db - peak + settings.render_limiter_headroom_db
         gain = min(gain, room)
     gain = clamp(gain, settings.render_gain_min_db, settings.render_gain_max_db)
-    if abs(gain) < 0.5:
+    # Se salta la pasada solo si el clip ya esta a nivel *y* por debajo del techo: un clip
+    # que llega al volumen justo pero con el pico a +0,3 dBFS hay que tocarlo igual, o
+    # sale un mp4 que clipea al decodificarlo.
+    alto = peak is not None and peak > settings.render_peak_ceiling_db
+    if abs(gain) < 0.5 and not alto:
         log.info("%s ya esta a %.1f LUFS", path.name, lufs)
         return 0.0
 
-    # El limitador mira la muestra y el techo es de pico real, que el codificador AAC se
-    # salta por arriba: sin este margen de 1 dB el mp4 sale pegado a 0 dBFS.
+    if not await _apply_gain(path, gain):
+        log.warning("no se pudo normalizar %s: se queda a %.1f LUFS", path.name, lufs)
+        return 0.0
+
+    # El limitador mira la muestra, no el pico real, y cuando le toca clavar seis o siete
+    # decibelios de golpe el transitorio se le escapa: medido, un clip acababa a +0,3 dBFS
+    # con el techo puesto en -2. Una segunda pasada, ya sin ganancia, lo deja en su sitio
+    # sin perder volumen (-14,6 -> -14,7 LUFS). Sobremuestrear a 192 kHz antes de limitar
+    # se probo y no cambia nada (-2,9 contra -3,0), asi que no se hace.
+    nuevo, pico = await measure_loudness(path)
+    if pico is not None and pico > settings.render_peak_ceiling_db:
+        await _apply_gain(path, 0.0)
+        nuevo, pico = await measure_loudness(path)
+    log.info("%s: %.1f LUFS %+.1f dB -> %.1f LUFS (pico %.1f dBFS)",
+             path.name, lufs, gain, nuevo or 0.0, pico or 0.0)
+    return gain
+
+
+async def _apply_gain(path: Path, gain: float) -> bool:
+    """Aplica ganancia y techo al audio del mp4, dejando el video como esta."""
+    # Un poco por debajo del techo de pico real, que el AAC se sale por arriba de lo que
+    # ve el limitador.
     limit = 10 ** ((settings.render_peak_ceiling_db - 1.0) / 20)
     tmp = path.with_suffix(".norm.mp4")
     cmd = [
@@ -628,6 +656,9 @@ async def normalize_loudness(path: Path) -> float:
         "-i", str(path),
         "-map", "0:v", "-map", "0:a",
         "-c:v", "copy",
+        # `level=disabled` deja a `alimiter` siendo solo un techo: con el nivel por
+        # defecto tambien auto-nivela, y sube la mezcla hasta el limite por su cuenta
+        # (medido con un tono: de -24 dBFS a 0).
         "-af", f"volume={gain:.2f}dB,alimiter=limit={limit:.4f}:level=disabled",
         "-c:a", "aac", "-b:a", "160k", "-ac", "2",
         "-movflags", "+faststart",
@@ -637,14 +668,12 @@ async def normalize_loudness(path: Path) -> float:
         await run(cmd, timeout=settings.render_timeout_s)
     except CommandFailed:
         tmp.unlink(missing_ok=True)
-        log.warning("no se pudo normalizar %s: se queda a %.1f LUFS", path.name, lufs)
-        return 0.0
+        return False
     if not tmp.exists() or tmp.stat().st_size < 4096:
         tmp.unlink(missing_ok=True)
-        return 0.0
+        return False
     tmp.replace(path)
-    log.info("%s: %.1f LUFS %+.1f dB -> %.1f LUFS", path.name, lufs, gain, lufs + gain)
-    return gain
+    return True
 
 
 def have_render_deps() -> bool:

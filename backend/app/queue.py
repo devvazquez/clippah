@@ -228,6 +228,9 @@ class QueueWorker:
             music if music is not None else "sin cambios",
         )
         try:
+            # En un contenedor recien clonado la base local esta vacia (no se versiona),
+            # asi que el momento se reconstruye desde la ficha que se guardo al publicar.
+            await service.ensure_moment(moment_id, clip.get("render_spec"))
             result = await service.render_moment_clip(
                 moment_id, cues=cues, sfx=sfx, music=music
             )
@@ -384,10 +387,11 @@ class QueueWorker:
         ]
         if not moments:
             return 0
+        # La fila entera del video, no solo el titulo: la ficha de re-render necesita el
+        # recorte de las camaras y de que VOD sale.
         video = db.row_to_dict(
             await db.fetch_one(
-                "SELECT url, title, upload_date FROM videos WHERE id=?",
-                (moments[0]["video_id"],),
+                "SELECT * FROM videos WHERE id=?", (moments[0]["video_id"],)
             )
         )
         done = 0
@@ -416,14 +420,35 @@ class QueueWorker:
             }
             await sb.upload(storage_path, path.read_bytes(), content_type="video/mp4")
             poster = await upload_poster(sb, request_id, moment)
-            await sb.insert(
-                CLIPS,
-                _clip_row(request_id, enriched, clip, storage_path, poster),
-                upsert_on="moment_id",
+            await insert_clip(
+                sb,
+                _clip_row(request_id, enriched, clip, storage_path, poster,
+                          service.rerender_spec(moment, video)),
             )
             done += 1
             await self._patch(sb, request_id, {"clips_done": done})
         return done
+
+
+async def insert_clip(sb: Supabase, row: dict[str, Any]) -> None:
+    """Escribe la fila del clip, aunque el esquema de Supabase se haya quedado atras.
+
+    `render_spec` es una columna nueva: si el proyecto no la tiene todavia, PostgREST
+    rechaza el insert entero y el clip no se publicaria. Antes que perder el clip, se
+    sube sin la ficha y se avisa en el log: lo unico que se pierde es poder rehacerlo
+    desde otra maquina.
+    """
+    try:
+        await sb.insert(CLIPS, row, upsert_on="moment_id")
+    except SupabaseError as exc:
+        if "render_spec" not in str(exc):
+            raise
+        log.warning(
+            "el proyecto de Supabase no tiene la columna render_spec: aplica "
+            "supabase/schema.sql. El clip se sube sin la ficha de re-render."
+        )
+        await sb.insert(CLIPS, {k: v for k, v in row.items() if k != "render_spec"},
+                        upsert_on="moment_id")
 
 
 async def upload_poster(
@@ -449,6 +474,7 @@ def _clip_row(
     clip: ClipOut,
     storage_path: str,
     poster_path: str | None = None,
+    spec: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """Fila de `clips` a partir del momento local y del resultado del render."""
     return {
@@ -465,6 +491,8 @@ def _clip_row(
         "video_title": str(moment.get("video_title") or ""),
         "video_date": str(moment.get("video_date") or "") or None,
         "poster_path": poster_path,
+        # La ficha para volver a quemarlo en una maquina que no hizo el analisis.
+        "render_spec": spec,
         "t_start": float(moment.get("t_start") or 0.0),
         "t_end": float(moment.get("t_end") or 0.0),
         "score": float(moment.get("final_score") or 0.0),
@@ -524,9 +552,10 @@ async def publish_existing(
 
         await sb.upload(storage_path, path.read_bytes(), content_type="video/mp4")
         poster = await upload_poster(sb, folder, moment)
-        row = _clip_row(keep_request, moment, clip, storage_path, poster)
+        row = _clip_row(keep_request, moment, clip, storage_path, poster,
+                        service.rerender_spec(moment, video))
         row["version"] = version
-        await sb.insert(CLIPS, row, upsert_on="moment_id")
+        await insert_clip(sb, row)
         if old_path and old_path != storage_path:
             await sb.delete(old_path)
         published.append(moment_id)

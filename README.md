@@ -166,6 +166,14 @@ importan de ese entorno:
   análisis funciona en modo local: más lento y con títulos peores).
 - **Que la máquina traiga `ffmpeg`** y, si el venv no está, `make setup-backend setup-font`
   antes. `make drain` comprueba las dos cosas y aborta con un mensaje claro.
+- **La base local no viaja.** Un análisis nuevo se basta solo: descarga el VOD, lo analiza
+  y escribe sus propias filas. Pero rehacer un clip que ya existe necesita saber de qué VOD
+  sale, en qué segundos y dónde están las webcams, y eso vivía únicamente en el SQLite de
+  la máquina que hizo el análisis: en un contenedor limpio el re-render moría con
+  «Momento no encontrado». Por eso cada clip guarda esa ficha en Supabase
+  (`render_spec`), y el worker reconstruye la fila local a partir de ella
+  (`service.ensure_moment`) antes de renderizar. Los clips subidos antes de que existiera
+  la columna la reciben con `python scripts/backfill_specs.py`.
 
 Si el temporizador falla o nadie lo monta, no se pierde nada: las peticiones se quedan en
 `clip_requests` esperando, y lo que hubiera quedado a medias en un contenedor reciclado se
