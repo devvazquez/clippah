@@ -58,6 +58,24 @@ export function streamDate(raw: string | null | undefined): string {
   });
 }
 
+/** Nombre con el que se guarda el mp4: la fecha del directo delante, para que ordenen. */
+export function clipFilename(clip: {
+  title: string;
+  moment_id: string;
+  video_date?: string | null;
+}): string {
+  const slug =
+    clip.title
+      .toLowerCase()
+      .normalize("NFD")
+      .replace(/[\u0300-\u036f]/g, "")
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-|-$/g, "")
+      .slice(0, 50) || clip.moment_id;
+  const d = /^(\d{4})(\d{2})(\d{2})$/.exec((clip.video_date ?? "").trim());
+  return d ? `${d[1]}-${d[2]}-${d[3]}-${slug}.mp4` : `${slug}.mp4`;
+}
+
 export function scoreTone(score: number): { text: string; ring: string; dot: string } {
   if (score >= 0.75) return { text: "text-ok", ring: "ring-ok/30", dot: "bg-ok" };
   if (score >= 0.5) return { text: "text-accent-soft", ring: "ring-accent/30", dot: "bg-accent" };

@@ -90,6 +90,12 @@ directamente: comparten un proyecto de Supabase.
   el VOD del que salen (`src/lib/streams.ts`): un directo *es* el conjunto de sus clips. La
   miniatura es el fotograma del momento, que ya se saca durante el análisis, y sube al mismo
   bucket que el mp4 (`poster_path`, ~30 kB).
+- **Hay una página aparte solo para descargar** (`/descargas/`), que es la que se le pasa
+  al streamer: los mismos clips agrupados por directo, sin cola ni editor, con un botón por
+  clip y otro que los baja todos de uno en uno. El nombre del fichero lleva delante la fecha
+  del directo (`2026-08-22-pasando-a-un-metro….mp4`) para que ordenen en la carpeta de
+  descargas. Ojo: es comodidad, no una frontera de permisos — la clave anon va en el mismo
+  JavaScript que la otra página.
 - **Los clips se sirven desde Storage** con URLs firmadas de 12 h. El botón de descarga usa
   `?download=<nombre>`, que hace que Storage mande `Content-Disposition: attachment`: el
   mp4 se guarda con un nombre legible en vez de abrirse en una pestaña.

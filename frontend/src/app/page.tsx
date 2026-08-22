@@ -87,6 +87,13 @@ export default function Page() {
         <div className="flex items-baseline gap-2">
           <span className="text-[15px] font-semibold tracking-tight text-ink">clipper</span>
           <span className="text-xs text-ink-faint">clips verticales de tus directos</span>
+          {/* La pagina que se le pasa al streamer: los mismos clips, solo para bajar. */}
+          <a
+            href="/descargas/"
+            className="text-xs text-ink-faint underline-offset-2 hover:text-ink-dim hover:underline"
+          >
+            descargas
+          </a>
         </div>
         <p className="tnum flex items-center gap-2 text-[11px] text-ink-faint">
           <span

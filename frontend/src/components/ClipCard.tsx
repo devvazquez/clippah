@@ -7,20 +7,7 @@ import { ClipEditor } from "@/components/ClipEditor";
 import { Button } from "@/components/ui/button";
 import { downloadUrl } from "@/lib/supabase";
 import { type Clip, MUSIC_LABELS, SFX_LABELS } from "@/lib/types";
-import { hhmmss, scoreTone, twitchTime } from "@/lib/utils";
-
-/** Nombre con el que se guarda el mp4: reconocible en la carpeta de descargas. */
-function filename(clip: Clip): string {
-  const slug =
-    clip.title
-      .toLowerCase()
-      .normalize("NFD")
-      .replace(/[\u0300-\u036f]/g, "")
-      .replace(/[^a-z0-9]+/g, "-")
-      .replace(/^-|-$/g, "")
-      .slice(0, 50) || clip.moment_id;
-  return `${slug}.mp4`;
-}
+import { clipFilename, hhmmss, scoreTone, twitchTime } from "@/lib/utils";
 
 function vodLink(clip: Clip): string | null {
   if (!clip.video_url) return null;
@@ -123,7 +110,7 @@ export function ClipCard({ clip, src }: { clip: Clip; src?: string }) {
               // Un <a> normal: Storage manda el mp4 con Content-Disposition y el
               // navegador lo guarda sin pasar por otra pestaña.
               const a = document.createElement("a");
-              a.href = downloadUrl(src, filename(clip));
+              a.href = downloadUrl(src, clipFilename(clip));
               a.rel = "noreferrer";
               a.click();
             }}
