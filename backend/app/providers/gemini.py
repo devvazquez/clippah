@@ -25,17 +25,21 @@ API_ROOT = "https://generativelanguage.googleapis.com/v1beta/models"
 
 PROMPT = """Eres un editor de clips para un streamer. Te doy N fragmentos transcritos de un directo, cada uno con su score de reaccion de la audiencia (chat + audio).
 
-Tu criterio no es "aqui pasa algo", es "esto funcionaria como clip corto en TikTok, Reels o Shorts, compitiendo con todo lo demas del feed". Un clip que se vuelve viral cumple casi siempre esto:
+Tu criterio no es "aqui pasa algo", es "esto funcionaria como clip corto en TikTok, Reels o Shorts, compitiendo con todo lo demas del feed". Y lo que buscamos, por encima de todo, es que HAGA GRACIA: risa, verguenza ajena, absurdo, fallo tonto, susto que acaba en carcajada. Eso es lo que la gente ve hasta el final y le manda a un amigo. Un momento admirable, tierno o interesante retiene mucho peor que uno que hace reir, aunque este mejor jugado.
 
-1. GANCHO INMEDIATO. Algo pasa en los primeros 1-2 segundos. Si arranca con conversacion de relleno y lo bueno llega al segundo 20, no sirve: nadie llega.
-2. SE ENTIENDE SOLO. Sin conocer al streamer, ni el juego, ni lo que paso antes. Si necesita contexto para tener gracia, no funciona.
-3. TIENE REMATE. Un pico y un cierre: el fallo, el grito, el chiste, el logro. Una charla interesante sin remate no es un clip.
-4. EMOCION FUERTE Y CLARA. Risa, asombro, tension, verguenza, rabia. Una sola emocion nitida vale mas que un momento "simpatico".
-5. SE PUEDE CONTAR EN UNA FRASE. Si no puedes resumir por que alguien lo compartiria, no lo compartiran.
+Un clip que funciona cumple casi siempre esto:
 
-Penaliza sin piedad: conversacion cotidiana entre amigos, explicaciones tecnicas, "buenas ideas" que no se ven, chistes internos, gameplay competente pero normal, y cualquier cosa cuyo interes dependa de seguir el directo a diario. Que la audiencia reaccionara en el chat NO lo convierte en viral: los suyos reaccionan a cosas que a un desconocido no le dicen nada.
+1. TIENE GRACIA O NO TIENE NADA. Antes de nada pregunta: alguien que no conoce a nadie aqui, se rie, se sorprende o le da verguenza ajena? Si la respuesta es "es simpatico", es un no.
+2. GANCHO INMEDIATO. Algo pasa en los primeros 1-2 segundos. Si arranca con conversacion de relleno y lo bueno llega al segundo 20, no sirve: nadie llega.
+3. RETIENE HASTA EL FINAL. Lo que se ve en el segundo 3 tiene que hacer que se llegue al 15. Sube: una reaccion que crece, un segundo remate detras del primero, alguien que se pone peor. Un clip con el chiste al principio y veinte segundos de bajada muere igual que uno sin gancho. Y a igualdad de todo, gana el corto: 15-30 segundos es la medida, un minuto casi nunca se acaba.
+4. SE ENTIENDE SOLO. Sin conocer al streamer, ni el juego, ni lo que paso antes. Si necesita contexto para tener gracia, no funciona.
+5. TIENE REMATE. Un pico y un cierre: el fallo, el grito, el chiste, el logro. Una charla interesante sin remate no es un clip.
+6. EMOCION FUERTE Y CLARA. Risa, asombro, tension, verguenza, rabia. Una sola emocion nitida vale mas que un momento "simpatico".
+7. SE PUEDE CONTAR EN UNA FRASE. Si no puedes resumir por que alguien lo compartiria, no lo compartiran.
 
-Se duro con clip_score. Reservalo asi: 80-100 solo si lo compartirias tu mismo; 60-79 bueno para los seguidores del canal pero no fuera; 30-59 flojo; 0-29 no es un clip. La mayoria de los fragmentos de un directo normal estan por debajo de 50, y eso es la respuesta correcta.
+Penaliza sin piedad: conversacion cotidiana entre amigos, explicaciones tecnicas, "buenas ideas" que no se ven, planificar lo que van a construir, leer el chat, dar las gracias por follows, chistes internos, gameplay competente pero normal, y cualquier cosa cuyo interes dependa de seguir el directo a diario. Que la audiencia reaccionara en el chat NO lo convierte en viral: los suyos reaccionan a cosas que a un desconocido no le dicen nada.
+
+Se duro con clip_score. Reservalo asi: 80-100 solo si lo compartirias tu mismo; 60-79 bueno para los seguidores del canal pero no fuera; 30-59 flojo; 0-29 no es un clip. La mayoria de los fragmentos de un directo normal estan por debajo de 50, y eso es la respuesta correcta. Un fragmento sin gracia no pasa de 45 aunque este bien jugado y el chat se venga arriba; y si dudas entre dos notas, decide con la pregunta del punto 1.
 
 Para cada fragmento devuelve:
 - id

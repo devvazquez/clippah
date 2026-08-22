@@ -35,6 +35,42 @@ W_SIGNAL_ENRICHED = 0.15
 # es que se encontro por otra via. Se le da un valor neutro en vez de su ~0 real.
 NEUTRAL_SIGNAL = 0.5
 
+# Que categoria funciona en un feed de video corto. No es un juicio sobre el momento: es
+# donde la gente se queda y comparte. Lo gracioso y el fallo se ven sin contexto y se
+# reenvian; una explicacion o una buena jugada piden saber de que va y se pasan de largo,
+# asi que a igualdad de nota del modelo van por detras.
+CATEGORY_WEIGHT = {
+    "gracioso": 1.15,
+    "fail": 1.12,
+    "reaccion": 1.08,
+    "polemica": 1.00,
+    "habilidad": 0.95,
+    "otro": 0.90,
+    "informativo": 0.80,
+}
+
+# La duracion tambien retiene: por encima de medio minuto hay que ganarse cada segundo, y
+# un clip de un minuto casi nunca se acaba. Es un empujon suave, no un filtro: los bordes
+# los decide el refinado de la ventana, no esto.
+LENGTH_SWEET_S = 32.0
+LENGTH_WORST_S = 60.0
+LENGTH_WORST_FACTOR = 0.90
+
+
+# Lo que el modelo descarta no se tira: se queda de reserva, a mitad de nota. Con el
+# criterio apretado (le pedimos que sea duro y que priorice lo que hace gracia) un directo
+# tranquilo puede dejar dos momentos aprobados de doce, y quien pidio cinco clips prefiere
+# ver los tres flojos y descartarlos el que abrir la galeria y encontrar la mitad. Al ir
+# a mitad de nota, solo se renderizan cuando no hay nada mejor.
+DISCARD_FACTOR = 0.5
+
+
+def _length_factor(seconds: float) -> float:
+    if seconds <= LENGTH_SWEET_S:
+        return 1.0
+    tramo = min(1.0, (seconds - LENGTH_SWEET_S) / (LENGTH_WORST_S - LENGTH_SWEET_S))
+    return 1.0 - tramo * (1.0 - LENGTH_WORST_FACTOR)
+
 
 @dataclass(slots=True)
 class Fragment:
@@ -251,8 +287,6 @@ def finalize(
     w_llm = 1.0 - w_signal
     rows: list[dict[str, Any]] = []
     for frag, score in zip(fragments, scores, strict=True):
-        if not score.worth_clipping:
-            continue
         if frag.source == "vision":
             nrm = NEUTRAL_SIGNAL
         elif spread < 1e-9:
@@ -260,6 +294,11 @@ def finalize(
         else:
             nrm = (frag.signal_score - lo) / spread
         final = w_signal * nrm + w_llm * (score.clip_score / 100.0)
+        # Y a igualdad de nota, delante lo que retiene: la categoria y la duracion.
+        final *= CATEGORY_WEIGHT.get(score.category, 1.0)
+        final *= _length_factor(frag.t_end - frag.t_start)
+        if not score.worth_clipping:
+            final *= DISCARD_FACTOR
         rows.append(
             {
                 "id": frag.id,
