@@ -14,6 +14,7 @@ central se la come.
 
 from __future__ import annotations
 
+import re
 import shutil
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -201,6 +202,25 @@ def _ass_escape(text: str) -> str:
     return text.replace("\\", "\\\\").replace("{", "\\{").replace("}", "\\}").strip()
 
 
+# Alargamientos y gritos, que Whisper transcribe como palabras: una tirada de vocales
+# ("uuuu", "aaah"), una interjeccion ("eh", "oh"), un zumbido ("mmm") o unos puntos
+# suspensivos. Nada que empiece por consonante entra aqui, asi que las palabras de verdad
+# de dos letras ("ya", "he", "va") se quedan.
+_FILLER = re.compile(r"^(?:([aeiou])\1*[hj]*|[hm]{2,}|[.…]+)$", re.IGNORECASE)
+
+
+def _is_filler(text: str) -> bool:
+    """Si la "palabra" es solo un sonido.
+
+    Quemarla no dice nada y tapa justo lo que hay que ver: el clip de un susto acababa
+    con tres lineas de "uuuu uuuu uuuu" encima del momento del susto.
+    """
+    word = text.strip().strip(".,;:!?¡¿…\"'-").lower()
+    if not word:                                   # solo puntuacion
+        return True
+    return len(word) > 1 and bool(_FILLER.match(word))
+
+
 def group_words(
     words: list[Word], t_start: float, t_end: float, *, max_words: int, max_chars: int
 ) -> list[SubtitleCue]:
@@ -210,7 +230,11 @@ def group_words(
     entera obliga a parar el scroll para leer, que es justo lo contrario de lo que se
     busca.
     """
-    inside = [w for w in words if w.end > t_start and w.start < t_end and w.text.strip()]
+    inside = [
+        w
+        for w in words
+        if w.end > t_start and w.start < t_end and w.text.strip() and not _is_filler(w.text)
+    ]
     cues: list[SubtitleCue] = []
     chunk: list[Word] = []
 
