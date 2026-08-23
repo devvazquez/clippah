@@ -60,6 +60,23 @@ ninguna clave la app funciona igual, solo más lenta y con títulos menos ricos.
 | `make setup-font` | Baja Montserrat (título) y Barlow (subtítulos) |
 | `make clean-data` | Borra media, miniaturas y la base de datos |
 
+Si el backend va a quedarse solo atendiendo la cola, lánzalo **desprendido de la terminal
+que lo arranca**:
+
+```bash
+setsid nohup make backend-keep > backend.log 2>&1 < /dev/null &
+```
+
+El guardián de `backend-keep` cubre que se muera el servidor, pero no que alguien barra el
+grupo de procesos entero: pasó en una sandbox, y se lo llevó al servidor y al guardián a la
+vez, sin dejar ni la línea de «murió» en el log. `setsid` lo pone en su propia sesión, y
+entonces la señal que mata al shell que lo arrancó ya no le llega. Se nota en que el `SID`
+del proceso es el suyo y no el de la terminal:
+
+```bash
+ps -eo pid,sid,cmd | grep uvicorn
+```
+
 ---
 
 ## La interfaz y la cola (Supabase)
