@@ -22,6 +22,10 @@ clips aparecen en la interfaz para descargarlos. Ver
 > «Descargar clip». El `RenderSpec` sigue siendo el contrato: se expone en
 > `GET /api/moments/{id}/spec`.
 
+> **Si eres un agente**, lee [`CLAUDE.md`](CLAUDE.md) antes de tocar nada: ahí está el
+> procedimiento para encargos del tipo «encuéntrame un clip gracioso» o «analiza este
+> directo», con las transcripciones ya versionadas en `backend/data/transcripts/`.
+
 ---
 
 ## Instalación

@@ -13,9 +13,17 @@ backend/assets/emoji/
 # Montserrat la baja `make setup-font`: 450 KB de binario no van al repo.
 backend/assets/fonts/
 
-# Backend data (media, thumbs, sqlite)
-backend/data/
+# Backend data (media, thumbs, sqlite). Se excluye el contenido y no la carpeta, porque
+# git no vuelve a incluir nada dentro de un directorio excluido.
+backend/data/*
 !backend/data/.gitkeep
+# Las transcripciones completas SI se versionan: 60 KB de texto por directo, y son lo que
+# permite buscar un momento ("donde dicen X") sin volver a gastar cuota de transcripcion.
+!backend/data/transcripts/
+backend/data/transcripts/*
+!backend/data/transcripts/*.tsv
+# Los trozos a medias, no: son el andamio de una transcripcion que se quedo a mitad.
+backend/data/transcripts/*.parts/
 # Red de seguridad: ningun data/ suelto en el repo
 /data/
 
