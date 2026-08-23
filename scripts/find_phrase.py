@@ -1,23 +1,31 @@
 """Busca una frase en el audio de un directo y dice en que segundo se dice.
 
 El analisis solo transcribe las ventanas candidatas, asi que si alguien dice algo fuera de
-esas ventanas no queda por ningun lado. Esto pasa el VOD entero por Whisper en local (sin
-gastar cuota de nadie), guarda la transcripcion completa en `backend/data/transcripts/` y
-busca los patrones. La segunda vez que se busca en el mismo directo ya no transcribe: lee
-el fichero.
+esas ventanas no queda por ningun lado. Esto transcribe el VOD entero, lo guarda en
+`backend/data/transcripts/` y busca los patrones. La segunda vez que se busca en el mismo
+directo ya no transcribe: lee el fichero.
 
-    python scripts/find_phrase.py jopa plex                  # en todos los VODs con audio
-    python scripts/find_phrase.py --vod v2851488297 jopa     # en uno
-    python scripts/find_phrase.py --model small jopa         # mas fino y mas lento
+    python scripts/find_phrase.py --groq --vod v2851488297 jopa yopa
+    python scripts/find_phrase.py jopa plex                  # local, en todo lo que haya
+    python scripts/find_phrase.py --model small jopa          # local mas fino y mas lento
 
-Con `tiny` (el de serie) un nombre propio puede salir mal escrito, asi que conviene buscar
-varias formas: `jopa yopa hopa`.
+**Para buscar nombres propios hace falta `--groq`.** Whisper en local con `tiny` o `small`
+destroza el habla rapida y con ruido de juego de fondo ("un sigo, un senor", "el arte de
+modismo de vida"): sirve para hacerse una idea, no para buscar un nombre, porque el nombre
+sale escrito de cualquier manera. `--groq` usa `whisper-large-v3-turbo`, acierta, y va a
+unas 30 veces el tiempo real; a cambio gasta cuota (`GROQ_ASD` la limita, y el propio
+cliente se para antes de pasarse). Aun con Groq conviene buscar variantes: `jopa yopa`.
+
+`--vod` se puede repetir, y entonces se respeta ese orden (util para ir del directo mas
+probable al menos probable y parar en cuanto aparezca).
 """
 
 from __future__ import annotations
 
+import asyncio
 import re
 import sys
+import tempfile
 import time
 from pathlib import Path
 
@@ -25,6 +33,11 @@ BACKEND = Path(__file__).resolve().parents[1] / "backend"
 sys.path.insert(0, str(BACKEND))
 
 from app.config import settings  # noqa: E402
+from app.utils import ffmpeg_bin, ffprobe_bin, run  # noqa: E402
+
+# Diez minutos por peticion: en mp3 mono a 64 kbps son unos 5 MB, con margen de sobra
+# sobre los 25 MB que acepta Groq.
+CHUNK_S = 600
 
 
 def hhmmss(seconds: float) -> str:
@@ -52,11 +65,60 @@ def transcribe(wav: Path, model_name: str) -> list[tuple[float, float, str]]:
     return out
 
 
-def cached(ext_id: str, wav: Path, model_name: str) -> list[tuple[float, float, str]]:
+async def transcribe_groq(wav: Path) -> list[tuple[float, float, str]]:
+    """Transcribe el wav entero con Groq, por trozos, sumando el desplazamiento.
+
+    Se trocea porque Groq acepta 25 MB por peticion, y en mp3 mono a 64 kbps diez minutos
+    son cinco. Las palabras vienen con tiempo, asi que se agrupan en lineas cortas para
+    que al buscar se lea el contexto.
+    """
+    from app.providers.groq import GroqTranscriber
+
+    groq = GroqTranscriber()
+    if not groq.configured:
+        print("Falta GROQ_API_KEY")
+        raise SystemExit(2)
+
+    medida = await run(
+        [ffprobe_bin(), "-v", "error", "-show_entries", "format=duration",
+         "-of", "csv=p=0", str(wav)]
+    )
+    duracion = float(medida.stdout.strip())
+    filas: list[tuple[float, float, str]] = []
+    with tempfile.TemporaryDirectory(prefix="clipper-buscar-") as tmp:
+        for i, inicio in enumerate(range(0, int(duracion), CHUNK_S)):
+            trozo = Path(tmp) / f"trozo{i:03d}.mp3"
+            await run(
+                [ffmpeg_bin(), "-v", "error", "-nostdin", "-y", "-ss", str(inicio),
+                 "-t", str(CHUNK_S), "-i", str(wav), "-ac", "1", "-b:a", "64k",
+                 str(trozo)]
+            )
+            if not await groq.has_room(trozo):
+                print(f"  cuota de Groq agotada en {hhmmss(inicio)}: se para aqui")
+                break
+            t = await groq.transcribe(trozo, "es")
+            linea: list[str] = []
+            desde = float(inicio)
+            for w in t.words:
+                if not linea:
+                    desde = inicio + w.start
+                linea.append(w.text)
+                if len(linea) >= 10:
+                    filas.append((desde, inicio + w.end, " ".join(linea).strip()))
+                    linea = []
+            if linea:
+                filas.append((desde, min(duracion, inicio + CHUNK_S), " ".join(linea).strip()))
+            print(f"  … {hhmmss(inicio + CHUNK_S)} transcrito", flush=True)
+    return filas
+
+
+def cached(
+    ext_id: str, wav: Path, model_name: str, groq: bool = False
+) -> list[tuple[float, float, str]]:
     """La transcripcion completa, de disco si ya estaba."""
     carpeta = settings.data_dir / "transcripts"
     carpeta.mkdir(parents=True, exist_ok=True)
-    fichero = carpeta / f"{ext_id}.{model_name}.tsv"
+    fichero = carpeta / f"{ext_id}.{'groq' if groq else model_name}.tsv"
     if fichero.exists():
         filas = []
         for linea in fichero.read_text(encoding="utf-8").splitlines():
@@ -64,9 +126,10 @@ def cached(ext_id: str, wav: Path, model_name: str) -> list[tuple[float, float, 
             filas.append((float(a), float(b), texto))
         print(f"{ext_id}: {len(filas)} segmentos ya transcritos")
         return filas
-    print(f"{ext_id}: transcribiendo {wav.stat().st_size / 1048576:.0f} MB con {model_name}…")
+    motor = "groq" if groq else model_name
+    print(f"{ext_id}: transcribiendo {wav.stat().st_size / 1048576:.0f} MB con {motor}…")
     t0 = time.monotonic()
-    filas = transcribe(wav, model_name)
+    filas = asyncio.run(transcribe_groq(wav)) if groq else transcribe(wav, model_name)
     fichero.write_text(
         "\n".join(f"{a:.2f}\t{b:.2f}\t{t}" for a, b, t in filas), encoding="utf-8"
     )
@@ -76,16 +139,20 @@ def cached(ext_id: str, wav: Path, model_name: str) -> list[tuple[float, float, 
 
 def main() -> None:
     args = sys.argv[1:]
-    solo_vod, model_name = "", "tiny"
+    vods: list[str] = []
+    model_name, groq = "tiny", False
     patrones = []
     i = 0
     while i < len(args):
         if args[i] == "--vod":
-            solo_vod = args[i + 1]
+            vods.append(args[i + 1])
             i += 2
         elif args[i] == "--model":
             model_name = args[i + 1]
             i += 2
+        elif args[i] == "--groq":
+            groq = True
+            i += 1
         else:
             patrones.append(args[i].lower())
             i += 1
@@ -93,9 +160,12 @@ def main() -> None:
         print(__doc__)
         raise SystemExit(2)
 
-    wavs = sorted(settings.media_dir.glob("*.wav"), key=lambda p: p.stat().st_size)
-    if solo_vod:
-        wavs = [w for w in wavs if solo_vod in w.name]
+    disponibles = list(settings.media_dir.glob("*.wav"))
+    if vods:
+        # El orden que pide quien llama, que sabe por donde empezar a buscar.
+        wavs = [w for v in vods for w in disponibles if v in w.name]
+    else:
+        wavs = sorted(disponibles, key=lambda p: p.stat().st_size)
     if not wavs:
         print("No hay wavs en", settings.media_dir)
         raise SystemExit(2)
@@ -103,14 +173,22 @@ def main() -> None:
     total = 0
     for wav in wavs:
         ext_id = wav.stem.replace("twitch-", "")
-        filas = cached(ext_id, wav, model_name)
+        filas = cached(ext_id, wav, model_name, groq)
+        encontrado = 0
         for inicio, _fin, texto in filas:
             bajo = texto.lower()
             for p in patrones:
                 if re.search(rf"\b{re.escape(p)}", bajo):
                     print(f"  >>> {ext_id} {hhmmss(inicio)} ({inicio:.1f}s): {texto}")
-                    total += 1
+                    encontrado += 1
                     break
+        print(f"{ext_id}: {encontrado} coincidencias")
+        total += encontrado
+        if encontrado:
+            # Se para aqui a proposito: transcribir lo que queda cuesta cuota y ya
+            # tenemos donde mirar.
+            print("(se para: ya hay coincidencias en este directo)")
+            break
     print(f"\n{total} coincidencias de {', '.join(patrones)}")
 
 
