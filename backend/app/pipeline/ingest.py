@@ -207,26 +207,42 @@ async def _transcode_to_wav(src: Path, dst: Path) -> None:
     )
 
 
+# Por que fallo la ultima resolucion de stream. Cuando no se puede resolver, el error que
+# ve quien pidio el clip decia solo "no se pudo resolver el stream", y eso no se puede
+# diagnosticar: no distingue un VOD borrado de un bloqueo de Twitch a la IP del
+# contenedor. Aqui se guarda lo que dijo yt-dlp para poder contarlo.
+last_stream_error = ""
+
+
 async def resolve_stream_url(info: VideoInfo, *, max_height: int = 720) -> tuple[str, float]:
     """URL directa del stream de video para hacer seek remoto con ffmpeg.
 
-    Devuelve (url, expires_at_epoch). Cadena vacia si no se puede resolver.
+    Devuelve (url, expires_at_epoch). Cadena vacia si no se puede resolver, y entonces
+    `last_stream_error` cuenta por que.
     """
+    global last_stream_error
     fmts = [
         f"best[height<={max_height}][ext=mp4]",
         f"best[height<={max_height}]",
         "best",
     ]
+    fallos = []
     for fmt in fmts:
         cmd = [*ytdlp_base(), "-g", "-f", fmt, info.url]
         try:
             res = await run(cmd, timeout=180)
         except CommandFailed as exc:
             log.warning("yt-dlp -g fallo con -f %s: %s", fmt, exc)
+            # De la parrafada de yt-dlp interesa la ultima linea, que es el motivo.
+            motivo = str(exc).strip().splitlines()[-1][:200]
+            fallos.append(f"{fmt}: {motivo}")
             continue
         urls = [ln.strip() for ln in res.stdout.splitlines() if ln.strip().startswith("http")]
         if urls:
+            last_stream_error = ""
             return urls[0], time.time() + STREAM_URL_TTL_S
+        fallos.append(f"{fmt}: yt-dlp no devolvio ninguna URL")
+    last_stream_error = " | ".join(fallos)
     return "", 0.0
 
 

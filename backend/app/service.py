@@ -16,7 +16,7 @@ from . import db
 from .config import settings
 from .events import hub
 from .models import CaptionCue, ClipOut, RenderSpec, SfxCue, Word
-from .pipeline import frames, render, vision
+from .pipeline import frames, ingest, render, vision
 from .pipeline.ingest import ProbeFailed, UnsupportedUrl, VodTooLong, probe, resolve_url
 from .pipeline.orchestrator import new_id, runner
 from .utils import CommandFailed, log
@@ -103,8 +103,11 @@ async def clip_source(video: dict[str, Any]) -> str:
     if not url or (expires and expires < time.time()):
         url = await frames._refresh_stream_url(video)
     if not url:
+        # Con el motivo de yt-dlp dentro: la fila del clip es lo unico que se lee cuando
+        # esto falla en un turno programado, y sin el no hay nada que diagnosticar.
+        motivo = ingest.last_stream_error or "yt-dlp no dijo por que"
         raise Unavailable(
-            "No hay fuente de video para renderizar: no se pudo resolver el stream"
+            f"No hay fuente de video para renderizar: no se pudo resolver el stream ({motivo})"
         )
     return url
 
