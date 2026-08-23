@@ -83,8 +83,9 @@ gasta cuota de nada: monta un Supabase de mentira y hace el ciclo entero contra 
 de la búsqueda por frase. Si acaba en verde, el motor funciona en ese runner: son 30 + 27
 comprobaciones, incluidas que el audio arranca a 0.000 y que el clip sale a −14 LUFS.
 
-Si falla, el resumen del run dice en qué paso. Lo más probable es `ffmpeg` (no debería:
-viene instalado) o una dependencia de Python.
+Si falla, el resumen del run dice en qué paso. Los dos sitios donde ha fallado de verdad
+mientras se montaba esto: una dependencia de Python sin declarar en `backend/pyproject.toml`
+y `ffmpeg`, que **no viene en la imagen del runner** y el workflow instala en el turno.
 
 ### 4. Opcional: que arranque al instante en vez de esperar al cron
 
@@ -143,7 +144,7 @@ Los clips aparecen en la galería agrupados por directo y se editan ahí igual q
 | | |
 |---|---|
 | Arrancar el turno | 5-15 min con el cron, segundos con el paso 4 |
-| Montar el runner | ~1 min (el venv va en caché) |
+| Montar el runner | ~2 min (ffmpeg se instala cada turno; el venv va en caché) |
 | Bajar el audio | ~8 min por cada 30 min de directo |
 | Analizar y puntuar | 5-10 min |
 | Renderizar cada clip | 1-2 min |

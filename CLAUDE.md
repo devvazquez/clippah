@@ -112,8 +112,13 @@ encuadre de las cámaras es el bueno.
 ## Donde corre esto de verdad
 
 El motor **no** es esta sandbox: es el workflow `.github/workflows/clipper.yml`, que cada 5
-minutos mira la cola de Supabase y hace lo que haya. Un runner de GitHub trae ffmpeg y
-tiene 4 vCPU, y en un repo publico los minutos son gratis e ilimitados. Ver `DEPLOY.md`.
+minutos mira la cola de Supabase y hace lo que haya. Un runner de GitHub tiene 4 vCPU, y
+en un repo publico los minutos son gratis e ilimitados. Ver `DEPLOY.md`.
+
+**ffmpeg no viene en la imagen de `ubuntu-latest`**: el workflow lo instala en cada turno
+que tiene trabajo. Y cuidado al escribir comprobaciones de que existe: `ffmpeg -version |
+head -1` devuelve 0 aunque no este instalado, porque el estado de una tuberia es el de su
+ultimo comando. La comprobacion que sirve es `command -v ffmpeg`.
 
 Consecuencias para lo que hagas aqui:
 

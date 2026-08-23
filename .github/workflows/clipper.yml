@@ -4,9 +4,10 @@
 # la ejecuta: cada 5 minutos mira la cola, y si hay algo lo analiza, renderiza los clips
 # verticales y los sube a Storage. Cuando no hay nada, sale en unos segundos.
 #
-# Por que aqui: un runner de GitHub trae ffmpeg y Python instalados, tiene 4 vCPU y 16 GB,
-# y en un repositorio publico los minutos son ilimitados y gratis. Es lo mas parecido a un
-# servidor encendido siempre sin pagar nada ni mantener nada.
+# Por que aqui: un runner de GitHub tiene 4 vCPU y 16 GB, trae Python, y en un repositorio
+# publico los minutos son ilimitados y gratis. Es lo mas parecido a un servidor encendido
+# siempre sin pagar nada ni mantener nada. ffmpeg no viene en la imagen: se instala en el
+# turno, y son 40 s.
 #
 # QUE HACE FALTA (una vez, en Settings -> Secrets and variables -> Actions):
 #   SUPABASE_URL          https://xxxx.supabase.co
@@ -107,9 +108,22 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Comprobar ffmpeg
+      # La imagen de ubuntu-latest NO trae ffmpeg. Instalarlo son unos 40 s, y solo pasa
+      # en los turnos que tienen trabajo de verdad, asi que no encarece los sondeos.
+      - name: ffmpeg
         if: ${{ inputs.smoke == true || steps.cola.outputs.hay == 'si' }}
-        run: ffmpeg -version | head -1 && ffprobe -version | head -1
+        run: |
+          if ! command -v ffmpeg >/dev/null || ! command -v ffprobe >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq ffmpeg
+          fi
+          # OJO: `ffmpeg -version | head -1` devuelve 0 aunque ffmpeg no exista, porque el
+          # estado de una tuberia es el de su ultimo comando (`head`). Este paso paso en
+          # verde en un runner sin ffmpeg y el fallo salio 20 pasos despues. La
+          # comprobacion de verdad es `command -v`.
+          command -v ffmpeg
+          command -v ffprobe
+          ffmpeg -version | head -1
 
       # El venv y las fuentes no cambian entre ejecuciones: cachearlos quita ~90 s de
       # instalacion a cada turno.
