@@ -13,7 +13,7 @@ BACKEND_PORT ?= 8000
 FRONTEND_PORT ?= 3000
 
 .DEFAULT_GOAL := help
-.PHONY: help setup setup-backend setup-frontend setup-font setup-local dev backend frontend export check check-queue drain lint typecheck fmt clean clean-data doctor doctor-backend
+.PHONY: help setup setup-backend setup-frontend setup-font setup-local dev backend backend-keep frontend export check check-queue drain lint typecheck fmt clean clean-data doctor doctor-backend
 
 help:
 	@grep -E '^[a-zA-Z_-]+:.*?## .*$$' $(MAKEFILE_LIST) | \
@@ -67,6 +67,23 @@ dev: ## Levanta backend (:8000) y frontend (:3000) con un solo comando
 
 backend: ## Solo el backend
 	cd backend && ../$(PYBIN)/python -m uvicorn app.main:app --reload --port $(BACKEND_PORT)
+
+backend-keep: ## El backend con guardian: si se muere, se vuelve a levantar
+	@# En una sandbox el proceso se cae por cosas de fuera (un corte de red contra
+	@# Supabase, el matador por memoria) y sin nadie escuchando la cola las ediciones que
+	@# se guardan desde la interfaz se quedan esperando en `rerender_queued`. Esto no
+	@# arregla la causa, solo hace que no haya que estar mirando.
+	@$(MAKE) --no-print-directory doctor-backend
+	@echo "backend con guardian -> http://127.0.0.1:$(BACKEND_PORT)  (Ctrl+C para parar)"
+	@intentos=0; \
+	 while true; do \
+	   ( cd backend && ../$(PYBIN)/python -m uvicorn app.main:app --port $(BACKEND_PORT) ); \
+	   code=$$?; \
+	   if [ $$code -eq 0 ] || [ $$code -eq 130 ]; then echo "backend parado a mano"; exit 0; fi; \
+	   intentos=$$((intentos + 1)); \
+	   echo "el backend murio (codigo $$code, caida $$intentos): otra vez en 5 s"; \
+	   sleep 5; \
+	 done
 
 frontend: ## Solo el frontend
 	cd frontend && npm run dev -- --port $(FRONTEND_PORT)

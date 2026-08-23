@@ -50,6 +50,7 @@ ninguna clave la app funciona igual, solo más lenta y con títulos menos ricos.
 |---|---|
 | `make dev` | Levanta los dos servicios con un solo comando |
 | `make backend` / `make frontend` | Solo uno de los dos |
+| `make backend-keep` | El backend con guardián: si se cae, se vuelve a levantar |
 | `make check` | `ruff check` + `tsc --noEmit` |
 | `make export` | Construye la interfaz estática en `frontend/out` |
 | `make check-queue` | Prueba el puente con Supabase contra un servidor de mentira |
