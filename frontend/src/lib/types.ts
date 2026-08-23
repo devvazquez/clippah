@@ -12,6 +12,8 @@ export interface ClipRequest {
   id: string;
   url: string;
   clips: number;
+  /** Lo que se pidio en una frase, si se escribio algo. */
+  prompt: string | null;
   status: RequestStatus;
   stage: string;
   progress: number;

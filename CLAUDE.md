@@ -109,6 +109,42 @@ encuadre de las cámaras es el bueno.
 
 ---
 
+## Donde corre esto de verdad
+
+El motor **no** es esta sandbox: es el workflow `.github/workflows/clipper.yml`, que cada 5
+minutos mira la cola de Supabase y hace lo que haya. Un runner de GitHub trae ffmpeg y
+tiene 4 vCPU, y en un repo publico los minutos son gratis e ilimitados. Ver `DEPLOY.md`.
+
+Consecuencias para lo que hagas aqui:
+
+- **Lo que se encola desde la interfaz lo procesa Actions**, no el backend local. Si estas
+  esperando a que pase algo, mira la pestana Actions del repo, no `backend.log`.
+- **Nada puede depender de `backend/data/`**, que no viaja: cada runner arranca de cero.
+  Por eso cada clip lleva su ficha (`render_spec`) en Supabase. Las transcripciones si
+  viajan, porque estan versionadas.
+- Para probar el ciclo entero sin gastar cuota ni tocar Supabase: `make check-queue` (30
+  comprobaciones) y `make check-hint` (27).
+- Levantar el backend local (`make backend-keep`) sigue valiendo para trabajar, pero ya no
+  es lo que sostiene el servicio.
+
+## Lo que pide el usuario en una frase
+
+La interfaz manda, con el enlace, una frase corta que llega hasta el pipeline
+(`clip_requests.prompt` -> `jobs.hint` -> `pipeline/hint.py`). Hace dos cosas:
+
+- **Siempre**: se le pasa al scorer (`HINT_BLOCK` en `providers/gemini.py`) y rompe empates.
+  No relaja el criterio: un fragmento sin gracia no se convierte en clip por encajar.
+- **Si la frase es una busqueda** («busca donde…», «encuentra donde dicen…»): ademas
+  localiza el momento buscando los terminos en el chat del VOD y en las transcripciones
+  versionadas, y anade esas ventanas como candidatos con `source='hint'`, que en
+  `score.finalize` van multiplicados por `HINT_FACTOR`.
+
+Asi que **antes de buscar a mano con `find_phrase.py`, mira si basta con encolar el directo
+con la frase**: el pipeline hace lo mismo y encima renderiza. `find_phrase.py` sigue siendo
+lo tuyo para explorar una transcripcion sin gastar un turno entero.
+
+---
+
 ## Encargo: «analiza este directo»
 
 ```bash

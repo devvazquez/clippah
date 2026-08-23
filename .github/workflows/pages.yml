@@ -1,0 +1,82 @@
+# Publica la interfaz en Cloudflare Pages cada vez que cambia.
+#
+# Es opcional: la web ya esta publicada y funciona. Esto solo sirve para que un cambio en
+# `frontend/` se vea publicado sin tener que construir nada a mano en ningun ordenador, que
+# es la otra mitad de "que no dependa de una maquina concreta".
+#
+# QUE HACE FALTA (Settings -> Secrets and variables -> Actions):
+#   CLOUDFLARE_API_TOKEN            token con permiso "Cloudflare Pages: Edit"
+#   CLOUDFLARE_ACCOUNT_ID           el id de cuenta que sale en el panel de Cloudflare
+#   NEXT_PUBLIC_SUPABASE_URL        el mismo del proyecto
+#   NEXT_PUBLIC_SUPABASE_ANON_KEY   la clave anon (es publica: acaba dentro del JavaScript)
+#
+# Y en Variables, si el proyecto de Pages no se llama `clipper` (el dominio es
+# clipper-5zq.pages.dev, pero el proyecto se llama `clipper`):
+#   PAGES_PROJECT                   el nombre del proyecto en Cloudflare Pages
+
+name: interfaz
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "frontend/**"
+      - ".github/workflows/pages.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: clipper-pages
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  publicar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Faltan las claves?
+        id: claves
+        env:
+          TOKEN: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          CUENTA: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          SB: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+        run: |
+          if [ -z "$TOKEN" ] || [ -z "$CUENTA" ] || [ -z "$SB" ]; then
+            echo "::warning title=Interfaz no publicada::Faltan CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID o NEXT_PUBLIC_SUPABASE_URL en los secrets. La web sigue como estaba."
+            echo "listo=no" >> "$GITHUB_OUTPUT"
+          else
+            echo "listo=si" >> "$GITHUB_OUTPUT"
+          fi
+
+      - uses: actions/setup-node@v4
+        if: ${{ steps.claves.outputs.listo == 'si' }}
+        with:
+          node-version: "20"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Construir el estatico
+        if: ${{ steps.claves.outputs.listo == 'si' }}
+        working-directory: frontend
+        env:
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          NEXT_PUBLIC_SUPABASE_ANON_KEY: ${{ secrets.NEXT_PUBLIC_SUPABASE_ANON_KEY }}
+        run: |
+          npm ci
+          npm run build
+          test -f out/index.html
+
+      - name: Subir a Pages
+        if: ${{ steps.claves.outputs.listo == 'si' }}
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            pages deploy frontend/out
+            --project-name=${{ vars.PAGES_PROJECT || 'clipper' }}
+            --branch=main

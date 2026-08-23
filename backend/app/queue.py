@@ -293,19 +293,25 @@ class QueueWorker:
         request_id = str(request["id"])
         url = str(request["url"])
         wanted = max(1, min(10, int(request.get("clips") or 1)))
-        log.info("cola: peticion %s (%s, %d clips)", request_id[:8], url, wanted)
+        # Lo que escribio la persona en la interfaz: «el mas gracioso», «donde le llaman
+        # jopa». Va con el job y el pipeline la usa para buscar y para puntuar.
+        pedido = str(request.get("prompt") or "").strip()[:300]
+        log.info(
+            "cola: peticion %s (%s, %d clips)%s",
+            request_id[:8], url, wanted, f" pidiendo: {pedido}" if pedido else "",
+        )
         try:
             await self._patch(sb, request_id, {
                 "status": "running", "stage": "ingest", "progress": 0.01,
                 "message": "Leyendo el VOD",
             })
-            job_id, video = await service.submit_job(url)
+            job_id, video = await service.submit_job(url, hint=pedido)
             await self._patch(sb, request_id, {
                 "job_id": job_id,
                 "video_title": str(video.get("title") or ""),
                 "video_url": str(video.get("url") or url),
                 "duration_s": float(video.get("duration") or 0.0),
-                "message": "Analizando",
+                "message": f"Buscando: {pedido}" if pedido else "Analizando",
             })
             error = await self._watch_job(sb, request_id, job_id)
             if error:

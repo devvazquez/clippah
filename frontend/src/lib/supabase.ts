@@ -35,12 +35,19 @@ export const isConfigured = () => Boolean(URL && ANON);
 
 // --------------------------------------------------------------------- la cola
 
-export async function queueRequest(url: string, clips: number): Promise<ClipRequest> {
+export async function queueRequest(
+  url: string,
+  clips: number,
+  prompt = "",
+): Promise<ClipRequest> {
   const sb = supabase();
   if (!sb) throw new Error("Falta configurar las claves de Supabase");
+  const limpio = prompt.trim().slice(0, 300);
   const { data, error } = await sb
     .from("clip_requests")
-    .insert({ url, clips, status: "queued" })
+    // `prompt` va como null y no como "" cuando no se escribe nada: asi la fila dice
+    // "no pidio nada en concreto" en vez de "pidio una frase vacia".
+    .insert({ url, clips, prompt: limpio || null, status: "queued" })
     .select()
     .single();
   if (error) throw new Error(error.message);

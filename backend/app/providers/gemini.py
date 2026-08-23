@@ -67,6 +67,22 @@ fotograma, sin audio ni contexto: puede equivocarse en la semantica del juego. U
 como indicio, pero si el transcript la contradice, hazle caso al transcript.
 
 Devuelve SOLO un array JSON. Nada de markdown ni backticks.
+"""
+
+# Lo que ha escrito la persona que pidio los clips. Se mete entre el criterio y los
+# fragmentos porque es una preferencia, no una orden: manda sobre los empates, no sobre
+# lo de siempre (un fragmento sin gracia no se convierte en clip por encajar con la
+# frase). Los fragmentos marcados `propuesto_por: peticion` son los que salieron de
+# buscar esa frase en el chat o en la transcripcion.
+HINT_BLOCK = """
+LO QUE PIDE QUIEN ENCARGA LOS CLIPS: «{hint}»
+
+Esto rompe los empates: de dos fragmentos que valgan parecido, sube el que encaja con lo
+pedido y bajalo si no tiene nada que ver. No cambia el resto del criterio: un fragmento
+que no tiene gracia ni se entiende solo sigue sin dar un clip aunque encaje con la frase,
+y uno buenisimo que no encaja sigue siendo bueno. Si un fragmento trae
+`propuesto_por: peticion`, esta en la lista porque ahi se dice lo que se busca: juzgalo
+por lo que pasa en su transcript, no por su score de reaccion (que sera bajo).
 
 Fragmentos:
 """
@@ -172,7 +188,7 @@ class GeminiScorer:
     async def has_room(self) -> bool:
         return await self.limiter.has_room(1.0)
 
-    def build_prompt(self, fragments: list[dict[str, Any]]) -> str:
+    def build_prompt(self, fragments: list[dict[str, Any]], hint: str = "") -> str:
         lines = []
         for frag in fragments:
             item = {
@@ -190,8 +206,15 @@ class GeminiScorer:
             if frag.get("visto_en_pantalla"):
                 item["visto_en_pantalla"] = frag["visto_en_pantalla"]
                 item["propuesto_por"] = "vision"
+            # Un fragmento que esta aqui porque lo pidio una persona se juzga sabiendolo:
+            # si no, el modelo lo lee como un tramo tranquilo cualquiera y lo descarta.
+            if frag.get("por_que_esta_aqui"):
+                item["por_que_esta_aqui"] = frag["por_que_esta_aqui"]
+                item["propuesto_por"] = "peticion"
             lines.append(json.dumps(item, ensure_ascii=False))
-        return PROMPT + "\n".join(lines)
+        pedido = hint.strip()
+        cabecera = HINT_BLOCK.format(hint=pedido) if pedido else "\nFragmentos:\n"
+        return PROMPT + cabecera + "\n".join(lines)
 
     async def _generate(
         self, body: dict[str, Any], *, timeout: float, models: list[str]
@@ -250,14 +273,16 @@ class GeminiScorer:
                 chain.append(extra)
         return chain
 
-    async def score_batch(self, fragments: list[dict[str, Any]]) -> list[ScoredMoment]:
+    async def score_batch(
+        self, fragments: list[dict[str, Any]], hint: str = ""
+    ) -> list[ScoredMoment]:
         """Puntua un lote (por defecto 10 candidatos por peticion)."""
         if not self.configured:
             raise ScorerUnavailable("GEMINI_API_KEY no configurada")
         if not fragments:
             return []
 
-        prompt = self.build_prompt(fragments)
+        prompt = self.build_prompt(fragments, hint)
         # Estimacion conservadora de tokens: ~4 caracteres por token + margen de salida.
         est_tokens = int(len(prompt) / 4) + 220 * len(fragments)
         await self.limiter.acquire(est_tokens)

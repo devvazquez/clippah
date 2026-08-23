@@ -27,6 +27,10 @@ create table if not exists public.clip_requests (
   id            uuid primary key default gen_random_uuid(),
   url           text not null,
   clips         int  not null default 1 check (clips between 1 and 10),
+  -- Lo que pide quien encola, en una frase: "el mas gracioso", "donde le llaman jopa".
+  -- Orienta al scorer y, si es una busqueda, dispara la busqueda en el chat y en las
+  -- transcripciones guardadas (ver `backend/app/pipeline/hint.py`).
+  prompt        text,
   status        clip_request_status not null default 'queued',
   -- Espejo del progreso del pipeline local, para que la interfaz lo vea en directo.
   stage         text not null default 'queued',
@@ -46,6 +50,10 @@ create table if not exists public.clip_requests (
   finished_at   timestamptz,
   updated_at    timestamptz not null default now()
 );
+
+-- Para los proyectos que ya tenian la tabla creada, donde el `create table` de arriba
+-- no hace nada.
+alter table public.clip_requests add column if not exists prompt text;
 
 create index if not exists clip_requests_queue_idx
   on public.clip_requests (status, created_at);
@@ -191,6 +199,8 @@ create policy "anon encola" on public.clip_requests
     and clips between 1 and 10
     and length(url) between 12 and 400
     and url ~ '^https?://'
+    -- La frase es libre, pero acotada: es texto que acaba dentro de un prompt de LLM.
+    and (prompt is null or length(prompt) <= 300)
   );
 
 drop policy if exists "anon cancela lo que aun no ha empezado" on public.clip_requests;

@@ -11,7 +11,7 @@ import aiosqlite
 
 from .config import settings
 
-SCHEMA_VERSION = 8
+SCHEMA_VERSION = 9
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS videos (
@@ -42,6 +42,8 @@ CREATE TABLE IF NOT EXISTS jobs (
     progress       REAL NOT NULL DEFAULT 0,
     message        TEXT,
     error          TEXT,
+    -- Lo que pidio el usuario en una frase ("el mas gracioso", "donde le llaman jopa").
+    hint           TEXT NOT NULL DEFAULT '',
     chat_available INTEGER NOT NULL DEFAULT 0,
     chat_messages  INTEGER NOT NULL DEFAULT 0,
     enriched       INTEGER NOT NULL DEFAULT 0,
@@ -190,6 +192,12 @@ async def _migrate(conn: aiosqlite.Connection) -> None:
             await conn.execute(
                 "ALTER TABLE moments ADD COLUMN music TEXT NOT NULL DEFAULT 'ninguna'"
             )
+        except Exception:  # noqa: BLE001 - ya existe en bases nuevas
+            pass
+    if current < 9:
+        # v9: la frase que escribio el usuario al encolar el directo.
+        try:
+            await conn.execute("ALTER TABLE jobs ADD COLUMN hint TEXT NOT NULL DEFAULT ''")
         except Exception:  # noqa: BLE001 - ya existe en bases nuevas
             pass
     if current != SCHEMA_VERSION:

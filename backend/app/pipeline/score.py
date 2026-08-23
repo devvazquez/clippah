@@ -63,6 +63,8 @@ LENGTH_WORST_FACTOR = 0.90
 # ver los tres flojos y descartarlos el que abrir la galeria y encontrar la mitad. Al ir
 # a mitad de nota, solo se renderizan cuando no hay nada mejor.
 DISCARD_FACTOR = 0.5
+# Lo que sale de la busqueda del usuario, por delante: es lo que ha pedido.
+HINT_FACTOR = 1.5
 
 
 def _length_factor(seconds: float) -> float:
@@ -109,7 +111,12 @@ class Fragment:
             "audio_z": self.audio_z,
             "transcript": self.transcript,
         }
-        if self.vision_note:
+        if self.vision_note and self.source == "hint":
+            # Lo pidio una persona: el modelo tiene que saber que este fragmento no esta
+            # aqui por su reaccion, sino porque encaja con lo que se busca.
+            d["por_que_esta_aqui"] = self.vision_note
+            d["propuesto_por"] = "peticion"
+        elif self.vision_note:
             d["visto_en_pantalla"] = self.vision_note
             d["propuesto_por"] = "vision"
         return d
@@ -229,7 +236,7 @@ class ScoringEngine:
         return self.provider
 
     async def score(
-        self, fragments: list[Fragment], *, chat_available: bool
+        self, fragments: list[Fragment], *, chat_available: bool, hint: str = ""
     ) -> tuple[list[ScoredMoment], bool]:
         """Devuelve (scores, enriched). `enriched=False` = generado sin LLM."""
         if not fragments:
@@ -248,7 +255,9 @@ class ScoringEngine:
             if degraded:
                 break
             try:
-                scored = await self.gemini.score_batch([f.to_prompt_dict() for f in batch])
+                scored = await self.gemini.score_batch(
+                    [f.to_prompt_dict() for f in batch], hint=hint
+                )
             except QuotaExhausted as exc:
                 degraded = True
                 await self._warn(f"{exc}. Puntuando con la heuristica local.")
@@ -278,7 +287,7 @@ def finalize(
     """Combina senal y LLM, filtra falsas alarmas, ordena y recorta a TOP_N."""
     # La normalizacion se hace solo sobre los candidatos de senales: incluir los de
     # vision (con score ~0) comprimiria a todos los demas contra el techo.
-    signal_only = [f.signal_score for f in fragments if f.source != "vision"]
+    signal_only = [f.signal_score for f in fragments if f.source == "signals"]
     lo = min(signal_only) if signal_only else 0.0
     hi = max(signal_only) if signal_only else 0.0
     spread = hi - lo
@@ -287,7 +296,7 @@ def finalize(
     w_llm = 1.0 - w_signal
     rows: list[dict[str, Any]] = []
     for frag, score in zip(fragments, scores, strict=True):
-        if frag.source == "vision":
+        if frag.source in ("vision", "hint"):
             nrm = NEUTRAL_SIGNAL
         elif spread < 1e-9:
             nrm = 0.5
@@ -299,6 +308,11 @@ def finalize(
         final *= _length_factor(frag.t_end - frag.t_start)
         if not score.worth_clipping:
             final *= DISCARD_FACTOR
+        # Si alguien pidio *esto*, esto es lo que quiere ver primero: un momento que sale
+        # de la busqueda gana a uno generico con mejor nota. Se aplica al final para que
+        # el descarte del modelo siga contando (un falso positivo no se cuela por pedirlo).
+        if frag.source == "hint":
+            final *= HINT_FACTOR
         rows.append(
             {
                 "id": frag.id,

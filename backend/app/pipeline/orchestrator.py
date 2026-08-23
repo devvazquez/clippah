@@ -16,6 +16,7 @@ from ..events import hub
 from ..models import CATEGORIES
 from ..utils import hhmmss, log
 from . import frames
+from . import hint as hint_mod
 from .candidates import Candidate, merge_visual_hits, select_candidates
 from .chat import ChatMessage, ChatUnavailable, fetch_chat, fetch_twitch_chat_via_cli
 from .ingest import (
@@ -57,9 +58,11 @@ def new_id(prefix: str) -> str:
 class JobContext:
     """Estado mutable de un job en ejecucion + emision de eventos con progreso monotono."""
 
-    def __init__(self, job_id: str, url: str) -> None:
+    def __init__(self, job_id: str, url: str, hint: str = "") -> None:
         self.job_id = job_id
         self.url = url
+        # La frase que escribio quien lo pide, ya interpretada (ver `pipeline.hint`).
+        self.hint = hint_mod.parse(hint)
         self.progress = 0.0
         self.warnings: list[str] = []
         self.providers: dict[str, Any] = {}
@@ -325,10 +328,42 @@ async def run_pipeline(ctx: JobContext) -> int:
         cands = merge_visual_hits(cands, visual_hits, signals)
     if not cands:
         raise RuntimeError("No se encontro ningun pico de actividad en este VOD")
+    # Lo que pide el usuario puede estar en un tramo tranquilo que ningun pico senala,
+    # asi que se busca aparte y se anade a mano. Sin esto, «encuentra donde le llaman X»
+    # depende de que por casualidad haya un pico de reaccion justo ahi.
+    if ctx.hint.search:
+        found = hint_mod.find(
+            ctx.hint,
+            duration=info.duration,
+            video_url=info.url,
+            chat=[(m.t, m.text) for m in messages],
+        )
+        if found.windows:
+            antes = len(cands)
+            cands = hint_mod.merge(cands, found.windows)
+            donde = []
+            if found.chat_hits:
+                donde.append(f"{found.chat_hits} en el chat")
+            if found.transcript_hits:
+                donde.append(f"{found.transcript_hits} en {found.transcript_file}")
+            log.info(
+                "peticion '%s': %d ventanas anadidas (%s)",
+                ctx.hint.text, len(cands) - antes, ", ".join(donde) or "sin detalle",
+            )
+        else:
+            await ctx.warn(
+                f"No encontre «{', '.join(ctx.hint.terms[:3])}» ni en el chat ni en las "
+                "transcripciones guardadas de este directo. Sigo con los momentos de "
+                "mas reaccion."
+            )
+
     from_vision = sum(1 for c in cands if c.source == "vision")
+    from_hint = sum(1 for c in cands if c.source == "hint")
     detail = f"{len(cands)} candidatos"
     if from_vision:
         detail += f" ({from_vision} de pantalla)"
+    if from_hint:
+        detail += f" ({from_hint} de lo que pediste)"
     await ctx.stage_progress("candidates", 1.0, detail)
 
     # ---------------------------------------------------------- 5. transcripcion
@@ -392,7 +427,9 @@ async def run_pipeline(ctx: JobContext) -> int:
         "score", 0.2,
         "Puntuando con Gemini" if scorer_provider == "gemini" else "Puntuando (modo heuristico)",
     )
-    scores, enriched = await scorer.score(fragments, chat_available=chat_available)
+    scores, enriched = await scorer.score(
+        fragments, chat_available=chat_available, hint=ctx.hint.text
+    )
     rows = finalize(fragments, scores, enriched=enriched)
     if not rows:
         # El LLM descarto todo: nos quedamos con los mejores por senal para no
@@ -531,12 +568,14 @@ class JobRunner:
                 self._queue.task_done()
 
     async def _run(self, job_id: str) -> None:
-        row = await db.fetch_one("SELECT url, status FROM jobs WHERE id=?", (job_id,))
+        row = await db.fetch_one(
+            "SELECT url, status, hint FROM jobs WHERE id=?", (job_id,)
+        )
         if row is None:
             return
         if str(row["status"]) in ("cancelled", "done"):
             return
-        ctx = JobContext(job_id, str(row["url"]))
+        ctx = JobContext(job_id, str(row["url"]), str(row["hint"] or ""))
         await db.execute(
             "UPDATE jobs SET status='running', updated_at=? WHERE id=?", (time.time(), job_id)
         )

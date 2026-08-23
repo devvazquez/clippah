@@ -1,0 +1,183 @@
+# El motor de clipper, sin maquina propia.
+#
+# La interfaz (Cloudflare Pages) escribe la peticion en Supabase y este workflow es lo que
+# la ejecuta: cada 5 minutos mira la cola, y si hay algo lo analiza, renderiza los clips
+# verticales y los sube a Storage. Cuando no hay nada, sale en unos segundos.
+#
+# Por que aqui: un runner de GitHub trae ffmpeg y Python instalados, tiene 4 vCPU y 16 GB,
+# y en un repositorio publico los minutos son ilimitados y gratis. Es lo mas parecido a un
+# servidor encendido siempre sin pagar nada ni mantener nada.
+#
+# QUE HACE FALTA (una vez, en Settings -> Secrets and variables -> Actions):
+#   SUPABASE_URL          https://xxxx.supabase.co
+#   SUPABASE_SERVICE_KEY  la clave service_role del proyecto
+#   GROQ_API_KEY          (opcional) transcripcion rapida; sin ella usa Whisper local
+#   GEMINI_API_KEY        (opcional) puntuacion y titulos; sin ella, heuristica
+#
+# SI EL REPOSITORIO ES PRIVADO: los minutos no son ilimitados (2.000/mes) y un cron cada
+# 5 minutos se los come solo en sondeos, porque cada arranque cuenta como un minuto.
+# Entonces hay que borrar el bloque `schedule:` de aqui abajo y despertar el motor con el
+# disparador instantaneo (`supabase/kick_github.sql`). Ver DEPLOY.md.
+
+name: clipper
+
+on:
+  schedule:
+    # Cada 5 minutos: es la frecuencia minima que admite GitHub. El retraso real puede
+    # ser de varios minutos mas cuando la cola de Actions va cargada.
+    - cron: "*/5 * * * *"
+  # El boton "Run workflow" de la pestana Actions, para no esperar al cron.
+  workflow_dispatch:
+    inputs:
+      smoke:
+        description: "Solo comprobar que el runner esta bien (no toca la cola)"
+        type: boolean
+        default: false
+  # Lo que dispara Supabase cuando se encola algo, para que salga al momento.
+  repository_dispatch:
+    types: [clipper]
+
+# Un solo motor a la vez. Sin esto, dos ejecuciones simultaneas se pelearian por la misma
+# fila de la cola (la reclamacion en Supabase lo aguanta, pero renderizar dos veces lo
+# mismo es tirar minutos). `cancel-in-progress: false` es importante: un analisis a medias
+# no se corta porque haya entrado otra peticion, se hace despues.
+concurrency:
+  group: clipper-motor
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  motor:
+    runs-on: ubuntu-latest
+    # Un directo largo son 30-45 min. El tope de GitHub son 6 h; 5 h deja margen para
+    # varias peticiones seguidas en el mismo turno sin quedarse colgado para siempre.
+    timeout-minutes: 300
+    env:
+      SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+      SUPABASE_SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
+      SUPABASE_BUCKET: clips
+      GROQ_API_KEY: ${{ secrets.GROQ_API_KEY }}
+      GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
+      # En un runner no hay a quien preguntar: que no se quede esperando nada por consola.
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      # ------------------------------------------------------------- hay trabajo?
+      # Antes de instalar nada: si la cola esta vacia (el caso normal, 11 de cada 12
+      # veces), este paso corta el resto del workflow en unos segundos.
+      - name: Mirar la cola
+        id: cola
+        if: ${{ inputs.smoke != true }}
+        run: |
+          if [ -z "$SUPABASE_URL" ] || [ -z "$SUPABASE_SERVICE_KEY" ]; then
+            echo "::warning title=Sin claves::Falta SUPABASE_URL o SUPABASE_SERVICE_KEY en los secrets del repositorio. El motor no puede leer la cola."
+            echo "hay=no" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # Las dos cosas que hay que atender: analisis sin empezar (o a medias, que un
+          # turno anterior dejo colgados) y clips esperando a que se rehagan.
+          filtro='status=in.(queued,claimed,running)&select=id&limit=1'
+          peticiones=$(curl -sS --max-time 25 \
+            -H "apikey: $SUPABASE_SERVICE_KEY" -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            "$SUPABASE_URL/rest/v1/clip_requests?$filtro")
+          filtro='render_status=in.(rerender_queued,rendering)&select=id&limit=1'
+          rehacer=$(curl -sS --max-time 25 \
+            -H "apikey: $SUPABASE_SERVICE_KEY" -H "Authorization: Bearer $SUPABASE_SERVICE_KEY" \
+            "$SUPABASE_URL/rest/v1/clips?$filtro")
+          echo "peticiones: $peticiones"
+          echo "rehacer:    $rehacer"
+          if [ "$peticiones" = "[]" ] && [ "$rehacer" = "[]" ]; then
+            echo "hay=no" >> "$GITHUB_OUTPUT"
+            echo "Nada pendiente." >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "hay=si" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Salir si no hay nada
+        if: ${{ inputs.smoke != true && steps.cola.outputs.hay != 'si' }}
+        run: echo "la cola esta vacia, nada que hacer"
+
+      # ------------------------------------------------------------------ montaje
+      - uses: actions/setup-python@v5
+        if: ${{ inputs.smoke == true || steps.cola.outputs.hay == 'si' }}
+        with:
+          python-version: "3.11"
+
+      - name: Comprobar ffmpeg
+        if: ${{ inputs.smoke == true || steps.cola.outputs.hay == 'si' }}
+        run: ffmpeg -version | head -1 && ffprobe -version | head -1
+
+      # El venv y las fuentes no cambian entre ejecuciones: cachearlos quita ~90 s de
+      # instalacion a cada turno.
+      - name: Cache del venv
+        if: ${{ inputs.smoke == true || steps.cola.outputs.hay == 'si' }}
+        uses: actions/cache@v4
+        with:
+          path: backend/.venv
+          key: venv-${{ runner.os }}-py311-${{ hashFiles('backend/pyproject.toml') }}
+
+      - name: Cache de fuentes y emojis
+        if: ${{ inputs.smoke == true || steps.cola.outputs.hay == 'si' }}
+        uses: actions/cache@v4
+        with:
+          path: |
+            backend/assets/fonts
+            backend/assets/emoji
+          key: assets-${{ runner.os }}-v1
+
+      - name: Instalar
+        if: ${{ inputs.smoke == true || steps.cola.outputs.hay == 'si' }}
+        run: |
+          test -x backend/.venv/bin/python || make setup-backend
+          test -f backend/assets/fonts/Montserrat-Bold.ttf || make setup-font
+          test -d backend/assets/emoji/apple || make setup-emoji
+          backend/.venv/bin/python -c "import aiosqlite, httpx, yt_dlp; print('dependencias ok')"
+
+      # ---------------------------------------------------------------- comprobar
+      # El turno de prueba: no toca Supabase ni gasta cuota, solo demuestra que en este
+      # runner el motor entero funciona. Es lo primero que hay que lanzar tras el deploy.
+      - name: Comprobaciones (modo smoke)
+        if: ${{ inputs.smoke == true }}
+        run: |
+          make check-queue
+          backend/.venv/bin/python scripts/check_hint.py
+          {
+            echo "### Runner listo"
+            echo ""
+            echo "- ffmpeg: \`$(ffmpeg -version | head -1)\`"
+            echo "- el ciclo entero de la cola pasa contra un Supabase de mentira"
+            echo "- la busqueda por peticion pasa sus comprobaciones"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # -------------------------------------------------------------------- motor
+      - name: Procesar la cola
+        if: ${{ inputs.smoke != true && steps.cola.outputs.hay == 'si' }}
+        run: |
+          set -o pipefail
+          backend/.venv/bin/python scripts/drain.py 2>&1 | tee turno.log
+
+      - name: Resumen
+        if: ${{ always() && inputs.smoke != true && steps.cola.outputs.hay == 'si' }}
+        run: |
+          {
+            echo "### Turno del motor"
+            echo ""
+            echo '```'
+            tail -40 turno.log 2>/dev/null || echo "(sin salida)"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # El log completo, para cuando el resumen no basta. Los mp4 no se suben aqui: ya
+      # estan en Supabase Storage, que es de donde los lee la interfaz.
+      - name: Guardar el log
+        if: ${{ always() && inputs.smoke != true && steps.cola.outputs.hay == 'si' }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: turno-${{ github.run_id }}
+          path: turno.log
+          retention-days: 7
+          if-no-files-found: ignore

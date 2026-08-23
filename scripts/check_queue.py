@@ -33,6 +33,8 @@ from fastapi import FastAPI, Request, Response  # noqa: E402
 
 PORT = 8799
 REQUEST_ID = "11111111-2222-3333-4444-555555555555"
+# La frase que se escribe en la interfaz al encolar.
+PEDIDO = "busca donde le llaman jopa"
 
 
 # ------------------------------------------------------ el Supabase de mentira
@@ -189,6 +191,8 @@ async def main() -> None:
 
     fake.clip_requests.append({
         "id": REQUEST_ID, "url": str(video["url"]), "clips": 1, "status": "queued",
+        # Lo que se escribio en la interfaz: tiene que llegar hasta el pipeline.
+        "prompt": PEDIDO,
         "stage": "queued", "progress": 0, "message": "En cola", "clips_done": 0,
         "created_at": "2026-01-01T00:00:00Z", "error": None,
     })
@@ -196,8 +200,11 @@ async def main() -> None:
     # El analisis y el render de verdad ya se han probado por su cuenta: aqui lo que se
     # comprueba es el puente. `submit_job` devuelve un job que ya esta terminado, y
     # `render_moment_clip` sale de la cache en disco sin tocar ffmpeg.
-    async def fake_submit(url: str) -> tuple[str, dict[str, Any]]:
+    recibido: dict[str, str] = {}
+
+    async def fake_submit(url: str, hint: str = "") -> tuple[str, dict[str, Any]]:
         assert url == video["url"]
+        recibido["hint"] = hint
         return job_id, video
 
     service.submit_job = fake_submit  # type: ignore[assignment]
@@ -287,6 +294,10 @@ async def main() -> None:
     check("progreso al 100%", abs(float(request["progress"]) - 1.0) < 1e-6,
           str(request["progress"]))
     check("guarda el job local", request.get("job_id") == job_id)
+    check("lo que se pidio llega al pipeline", recibido.get("hint") == PEDIDO,
+          repr(recibido.get("hint")))
+    check("y se ve en el mensaje de la fila", PEDIDO in str(request.get("message", ""))
+          or request["status"] == "done", str(request.get("message")))
     check("guarda el titulo del VOD", bool(request.get("video_title")))
     check("cuenta el clip", int(request.get("clips_done") or 0) == 1)
     check("pasa por render", "render" in stages, " -> ".join(stages))

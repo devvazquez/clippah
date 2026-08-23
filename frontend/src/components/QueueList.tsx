@@ -63,6 +63,11 @@ function Row({ request, onChange }: { request: ClipRequest; onChange: () => void
           <p className="truncate text-[13px] text-ink" title={request.url}>
             {title}
           </p>
+          {request.prompt ? (
+            <p className="truncate text-[11px] text-ink-dim" title={request.prompt}>
+              «{request.prompt}»
+            </p>
+          ) : null}
           <p className="tnum mt-0.5 text-[11px] text-ink-faint">
             {request.clips} clip{request.clips > 1 ? "s" : ""}
             {request.duration_s ? ` · ${durationLabel(request.duration_s)}` : ""}

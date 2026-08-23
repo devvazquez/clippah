@@ -41,8 +41,13 @@ class Unavailable(ServiceError):
 # --------------------------------------------------------------------- analisis
 
 
-async def submit_job(url: str) -> tuple[str, dict[str, Any]]:
-    """Da de alta un analisis y lo mete en la cola local. Devuelve (job_id, video)."""
+async def submit_job(url: str, hint: str = "") -> tuple[str, dict[str, Any]]:
+    """Da de alta un analisis y lo mete en la cola local. Devuelve (job_id, video).
+
+    `hint` es la frase que escribio quien lo pide («el mas gracioso», «donde le llaman
+    jopa»). Se guarda con el job porque el pipeline la necesita en dos sitios muy
+    separados en el tiempo: al elegir candidatos y al puntuarlos.
+    """
     from .pipeline.orchestrator import _upsert_video
 
     try:
@@ -60,10 +65,10 @@ async def submit_job(url: str) -> tuple[str, dict[str, Any]]:
     job_id = new_id("job")
     now = time.time()
     await db.execute(
-        """INSERT INTO jobs (id, video_id, url, status, stage, progress, message,
+        """INSERT INTO jobs (id, video_id, url, hint, status, stage, progress, message,
                created_at, updated_at)
-           VALUES (?, ?, ?, 'queued', 'queued', 0, 'En cola', ?, ?)""",
-        (job_id, video_id, info.url, now, now),
+           VALUES (?, ?, ?, ?, 'queued', 'queued', 0, 'En cola', ?, ?)""",
+        (job_id, video_id, info.url, (hint or "").strip()[:300], now, now),
     )
     await hub.publish(job_id, {"stage": "queued", "progress": 0.0, "message": "En cola"})
     await runner.submit(job_id)

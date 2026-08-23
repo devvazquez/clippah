@@ -34,7 +34,7 @@ CLIPS = "clips"
 async def pendiente(sb: Supabase) -> tuple[list[dict], list[dict]]:
     """Lo que hay por hacer: peticiones sin empezar y clips esperando re-render."""
     peticiones = await sb.select(REQUESTS, params={
-        "select": "id,url,clips,status,video_title",
+        "select": "*",
         "status": "in.(queued,claimed,running)",
         "order": "created_at.asc",
     })
@@ -63,7 +63,8 @@ async def main() -> None:
             print("Nada pendiente en la cola")
             return
         for p in peticiones:
-            print(f"pendiente: {p['url']} ({p['clips']} clips, {p['status']})")
+            pide = f" pidiendo: {p['prompt']}" if p.get("prompt") else ""
+            print(f"pendiente: {p['url']} ({p['clips']} clips, {p['status']}){pide}")
         for c in clips:
             print(f"pendiente: rehacer {c['moment_id']} ({c['render_status']})")
 
