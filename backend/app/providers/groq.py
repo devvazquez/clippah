@@ -69,6 +69,13 @@ class GroqTranscriber:
         }
         if language:
             data["language"] = language
+        # Vocabulario del canal como pista. Whisper escribe los nombres propios "a oido"
+        # y en un directo son la mitad de lo que importa: el mote del streamer, los
+        # amigos que salen, el juego. Sin esto, "Jopa" sale "Hopa" y "PoliSpawn"
+        # "Polispol", y eso acaba quemado en el subtitulo y en el titulo del clip.
+        vocab = settings.transcribe_vocab.strip()
+        if vocab:
+            data["prompt"] = vocab
 
         headers = {"Authorization": f"Bearer {self.api_key}"}
         payload = wav_path.read_bytes()

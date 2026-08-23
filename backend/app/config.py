@@ -110,6 +110,17 @@ class Settings(BaseSettings):
     groq_min_billed_seconds: float = 10.0
     groq_max_file_mb: float = 25.0
 
+    # --- Vocabulario del canal ---
+    # Whisper escribe los nombres propios de oido, y en un directo son justo lo que hay
+    # que acertar: el mote del streamer, quien sale con el, el juego. Sin esta pista
+    # "Jopa" sale "Hopa" y "PoliSpawn" sale "Polispol", y eso acaba quemado en el
+    # subtitulo y colado en el titulo del clip. Se manda tal cual al transcriptor.
+    # Editalo con los nombres que salgan en TUS directos (TRANSCRIBE_VOCAB).
+    transcribe_vocab: str = (
+        "rexxyconh, Minecraft, Twitch, TikTok, Jopa, PoliSpawn, Plex, Ibai, "
+        "Endelbar, Teosaurio, Javi, Ale, netherita, creeper, enderman, aldeano"
+    )
+
     # --- Cuotas Gemini (varian por region; el codigo lee el valor real de cabeceras) ---
     gemini_rpm: int = 15
     gemini_rpd: int = 1000

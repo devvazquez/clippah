@@ -227,6 +227,19 @@ def _is_filler(text: str) -> bool:
     return len(word) > 1 and bool(_FILLER.match(word))
 
 
+# Lo que como maximo se cree del final de una palabra. Whisper rellena el hueco entre
+# palabras estirando la anterior, asi que una pausa de tres segundos llega como una
+# palabra que "dura" tres segundos: el agrupador no veia el silencio y montaba una linea
+# que se quedaba fija en pantalla mientras nadie hablaba (medido: seis segundos con
+# "Ayer me llamaron"). Recortando el final a lo que dura decir la palabra, la pausa
+# reaparece y la linea se corta donde se corta la voz.
+WORD_MAX_S = 0.9
+
+
+def _word_end(w: Word) -> float:
+    return min(w.end, w.start + WORD_MAX_S)
+
+
 def group_words(
     words: list[Word], t_start: float, t_end: float, *, max_words: int, max_chars: int
 ) -> list[SubtitleCue]:
@@ -252,13 +265,13 @@ def group_words(
             chunk.clear()
             return
         start = max(0.0, chunk[0].start - t_start)
-        end = max(start + 0.35, min(t_end, chunk[-1].end) - t_start)
+        end = max(start + 0.35, min(t_end, _word_end(chunk[-1])) - t_start)
         cues.append(SubtitleCue(start=start, end=end, text=text))
         chunk.clear()
 
     for w in inside:
         prospective = " ".join([*(x.text.strip() for x in chunk), w.text.strip()])
-        gap = w.start - chunk[-1].end if chunk else 0.0
+        gap = w.start - _word_end(chunk[-1]) if chunk else 0.0
         if chunk and (len(chunk) >= max_words or len(prospective) > max_chars or gap > 0.7):
             flush()
         chunk.append(w)
