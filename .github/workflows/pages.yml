@@ -18,7 +18,8 @@ name: interfaz
 
 on:
   push:
-    branches: [main]
+    # La rama por defecto del repo. Si algun dia se renombra a `main`, esa ya esta puesta.
+    branches: [main, claude/implementa-esto-n9qpca]
     paths:
       - "frontend/**"
       - ".github/workflows/pages.yml"

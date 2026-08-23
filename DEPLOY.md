@@ -30,7 +30,9 @@ No hace falta que toques nada de esto, está aplicado y comprobado:
 - La interfaz nueva está publicada en <https://clipper-5zq.pages.dev> con el campo «Qué
   buscar» y sus atajos.
 - Los dos workflows están en `.github/workflows/`: `clipper.yml` (el motor) y `pages.yml`
-  (publicar la interfaz cuando cambie, opcional).
+  (publicar la interfaz cuando cambie, opcional). Están en la rama por defecto del repo,
+  que es donde GitHub exige que estén para que el cron y el disparador funcionen: no hay
+  que fusionar nada.
 
 ## Lo que tienes que hacer tú
 
