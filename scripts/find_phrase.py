@@ -65,7 +65,7 @@ def transcribe(wav: Path, model_name: str) -> list[tuple[float, float, str]]:
     return out
 
 
-async def transcribe_groq(wav: Path) -> list[tuple[float, float, str]]:
+async def transcribe_groq(wav: Path) -> tuple[list[tuple[float, float, str]], bool]:
     """Transcribe el wav entero con Groq, por trozos, sumando el desplazamiento.
 
     Se trocea porque Groq acepta 25 MB por peticion, y en mp3 mono a 64 kbps diez minutos
@@ -84,9 +84,22 @@ async def transcribe_groq(wav: Path) -> list[tuple[float, float, str]]:
          "-of", "csv=p=0", str(wav)]
     )
     duracion = float(medida.stdout.strip())
+    # Cada trozo se guarda en cuanto se transcribe. La cuota por hora de Groq se agota
+    # antes de acabar un directo largo, y sin esto el intento siguiente empezaria de cero
+    # (o peor: guardaria media transcripcion como si estuviera entera).
+    partes = settings.data_dir / "transcripts" / f"{wav.stem}.groq.parts"
+    partes.mkdir(parents=True, exist_ok=True)
+
     filas: list[tuple[float, float, str]] = []
+    completo = True
     with tempfile.TemporaryDirectory(prefix="clipper-buscar-") as tmp:
         for i, inicio in enumerate(range(0, int(duracion), CHUNK_S)):
+            hecho = partes / f"{i:03d}.tsv"
+            if hecho.exists():
+                for linea in hecho.read_text(encoding="utf-8").splitlines():
+                    a, b, texto = linea.split("\t", 2)
+                    filas.append((float(a), float(b), texto))
+                continue
             trozo = Path(tmp) / f"trozo{i:03d}.mp3"
             await run(
                 [ffmpeg_bin(), "-v", "error", "-nostdin", "-y", "-ss", str(inicio),
@@ -94,9 +107,12 @@ async def transcribe_groq(wav: Path) -> list[tuple[float, float, str]]:
                  str(trozo)]
             )
             if not await groq.has_room(trozo):
-                print(f"  cuota de Groq agotada en {hhmmss(inicio)}: se para aqui")
+                print(f"  cuota de Groq agotada en {hhmmss(inicio)}: se para aqui y lo que"
+                      " lleva transcrito se guarda; vuelve a lanzarlo cuando libere")
+                completo = False
                 break
             t = await groq.transcribe(trozo, "es")
+            nuevas: list[tuple[float, float, str]] = []
             linea: list[str] = []
             desde = float(inicio)
             for w in t.words:
@@ -104,12 +120,16 @@ async def transcribe_groq(wav: Path) -> list[tuple[float, float, str]]:
                     desde = inicio + w.start
                 linea.append(w.text)
                 if len(linea) >= 10:
-                    filas.append((desde, inicio + w.end, " ".join(linea).strip()))
+                    nuevas.append((desde, inicio + w.end, " ".join(linea).strip()))
                     linea = []
             if linea:
-                filas.append((desde, min(duracion, inicio + CHUNK_S), " ".join(linea).strip()))
+                nuevas.append((desde, min(duracion, inicio + CHUNK_S), " ".join(linea).strip()))
+            hecho.write_text(
+                "\n".join(f"{a:.2f}\t{b:.2f}\t{t}" for a, b, t in nuevas), encoding="utf-8"
+            )
+            filas.extend(nuevas)
             print(f"  … {hhmmss(inicio + CHUNK_S)} transcrito", flush=True)
-    return filas
+    return filas, completo
 
 
 def cached(
@@ -129,11 +149,20 @@ def cached(
     motor = "groq" if groq else model_name
     print(f"{ext_id}: transcribiendo {wav.stat().st_size / 1048576:.0f} MB con {motor}…")
     t0 = time.monotonic()
-    filas = asyncio.run(transcribe_groq(wav)) if groq else transcribe(wav, model_name)
-    fichero.write_text(
-        "\n".join(f"{a:.2f}\t{b:.2f}\t{t}" for a, b, t in filas), encoding="utf-8"
-    )
-    print(f"{ext_id}: {len(filas)} segmentos en {time.monotonic() - t0:.0f}s -> {fichero}")
+    if groq:
+        filas, completo = asyncio.run(transcribe_groq(wav))
+    else:
+        filas, completo = transcribe(wav, model_name), True
+    # El fichero final solo se escribe si el directo esta entero: con media
+    # transcripcion guardada como completa, la busqueda diria "no esta" mintiendo. Los
+    # trozos ya hechos se quedan en `.groq.parts` y el siguiente intento sigue por ahi.
+    if completo:
+        fichero.write_text(
+            "\n".join(f"{a:.2f}\t{b:.2f}\t{t}" for a, b, t in filas), encoding="utf-8"
+        )
+        print(f"{ext_id}: {len(filas)} segmentos en {time.monotonic() - t0:.0f}s -> {fichero}")
+    else:
+        print(f"{ext_id}: incompleto ({len(filas)} segmentos). Se busca en lo que hay.")
     return filas
 
 
