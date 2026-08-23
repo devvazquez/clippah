@@ -94,6 +94,10 @@ alter table public.clips add column if not exists captions_edited jsonb;
 alter table public.clips add column if not exists sfx_cues        jsonb not null default '[]'::jsonb;
 alter table public.clips add column if not exists sfx_edited      jsonb;
 alter table public.clips add column if not exists music_edited    text;
+-- El titulo quemado se edita igual: `title` es el que lleva puesto el mp4 y
+-- `title_edited` el que espera render. Es lo primero que se lee en el feed y lo que el
+-- modelo acierta menos, asi que tiene que poder cambiarse sin volver a analizar nada.
+alter table public.clips add column if not exists title_edited    text;
 alter table public.clips add column if not exists render_status   text not null default 'ready';
 alter table public.clips add column if not exists render_error    text;
 alter table public.clips add column if not exists version         int not null default 1;
@@ -195,12 +199,13 @@ create policy "anon cancela lo que aun no ha empezado" on public.clip_requests
   using (status = 'queued')
   with check (status = 'canceled');
 
--- Los subtitulos y el sonido son lo unico que la interfaz puede escribir en un clip. RLS
--- no distingue columnas, asi que la restriccion de verdad son los permisos: se le quita el
--- UPDATE entero y se le devuelve solo sobre esas columnas. Con eso, un cliente con la
--- clave anon no puede reescribir el titulo, la puntuacion ni la ruta del mp4.
+-- Lo que se edita del clip -titulo, subtitulos y sonido- es lo unico que la interfaz
+-- puede escribir. RLS no distingue columnas, asi que la restriccion de verdad son los
+-- permisos: se le quita el UPDATE entero y se le devuelve solo sobre esas columnas. Con
+-- eso, un cliente con la clave anon no puede tocar la puntuacion ni la ruta del mp4, y
+-- del titulo solo escribe el borrador (`title_edited`), no el que ya esta quemado.
 revoke update on public.clips from anon, authenticated;
-grant update (captions_edited, sfx_edited, music_edited, render_status)
+grant update (title_edited, captions_edited, sfx_edited, music_edited, render_status)
   on public.clips to anon, authenticated;
 
 drop policy if exists "anon pide re-render con subtitulos nuevos" on public.clips;

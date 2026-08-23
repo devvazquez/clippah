@@ -258,16 +258,20 @@ async def render_moment_clip(
     cues: list[dict[str, Any]] | None = None,
     sfx: list[dict[str, Any]] | None = None,
     music: str | None = None,
+    title: str | None = None,
 ) -> ClipOut:
     """Renderiza (o reutiliza) el vertical 9:16 de un momento.
 
-    `cues`, `sfx` y `music` son las ediciones que llegan de la interfaz: sustituyen a lo
-    que eligio el modelo y fuerzan el re-render aunque el clip ya estuviera en disco. Una
-    lista de efectos vacia significa "ninguno", que no es lo mismo que no tocarlos.
+    `title`, `cues`, `sfx` y `music` son las ediciones que llegan de la interfaz:
+    sustituyen a lo que eligio el modelo y fuerzan el re-render aunque el clip ya
+    estuviera en disco. Una lista de efectos vacia significa "ninguno", que no es lo mismo
+    que no tocarlos; un titulo vacio significa "sin titulo quemado".
     """
     moment, video = await load_moment(moment_id)
     out = render.clip_path(moment_id)
-    edited = cues is not None or sfx is not None or music is not None
+    edited = (
+        cues is not None or sfx is not None or music is not None or title is not None
+    )
     # Un layout explicito o una edicion siempre re-renderizan.
     if out.exists() and out.stat().st_size > 4096 and not layout and not edited:
         spec = build_render_spec(moment, video)
@@ -295,12 +299,15 @@ async def render_moment_clip(
 
     spec = build_render_spec(moment, video)
     source = await clip_source(video)
+    # El titulo quemado es el `clip_title` del LLM; sin IA no se quema nada, porque seria
+    # las primeras palabras del transcript. Si llega uno escrito a mano, manda ese: lo ha
+    # decidido una persona, asi que se quema aunque el momento no pasara por el modelo.
+    rotulo = str(moment.get("clip_title") or "") if title is None else title.strip()
+    a_la_vista = bool(rotulo) and (title is not None or bool(moment["enriched"]))
     opts = render.RenderOptions(
         layout=layout,
-        # El titulo quemado es el `clip_title` del LLM; sin IA no se quema nada,
-        # porque seria las primeras palabras del transcript.
-        title=str(moment.get("clip_title") or ""),
-        show_title=bool(moment["enriched"]) and bool(moment.get("clip_title")),
+        title=rotulo,
+        show_title=a_la_vista,
         focus_x=focus_x,
         words=spec.captions,
         cues=_cues(cues) if cues is not None else None,
@@ -313,9 +320,17 @@ async def render_moment_clip(
     except CommandFailed as exc:
         log.exception("render de %s fallo", moment_id)
         raise Unavailable(f"El render fallo: {exc}") from exc
-    await db.execute(
-        "UPDATE moments SET clip_path=? WHERE id=?", (str(result.path), moment_id)
-    )
+    if title is None:
+        await db.execute(
+            "UPDATE moments SET clip_path=? WHERE id=?", (str(result.path), moment_id)
+        )
+    else:
+        # El titulo escrito a mano se guarda con el clip: la base tiene que decir lo que
+        # lleva quemado el mp4, o el siguiente render volveria al del modelo.
+        await db.execute(
+            "UPDATE moments SET clip_path=?, clip_title=?, enriched=1 WHERE id=?",
+            (str(result.path), rotulo, moment_id),
+        )
     return ClipOut(
         moment_id=moment_id, width=result.width, height=result.height,
         duration=round(result.duration, 2), layout=result.layout,

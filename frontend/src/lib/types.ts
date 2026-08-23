@@ -73,6 +73,8 @@ export interface Clip {
   reason: string | null;
   created_at: string;
   // Subtitulos: `captions` es lo que hay quemado; `captions_edited` lo que espera render.
+  /** `title` es el que lleva quemado el mp4; `title_edited`, el que espera render. */
+  title_edited: string | null;
   captions: Cue[];
   captions_edited: Cue[] | null;
   sfx_cues: SfxCue[];

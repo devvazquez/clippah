@@ -119,11 +119,14 @@ export function downloadUrl(signed: string, filename: string): string {
  */
 export async function saveClipEdit(
   clipId: string,
-  edit: { cues?: Cue[]; sfx?: SfxCue[]; music?: string },
+  edit: { title?: string; cues?: Cue[]; sfx?: SfxCue[]; music?: string },
 ): Promise<void> {
   const sb = supabase();
   if (!sb) throw new Error("Falta configurar las claves de Supabase");
   const patch: Record<string, unknown> = { render_status: "rerender_queued" };
+  // Un titulo vacio es una edicion valida ("sin titulo quemado"), asi que aqui tambien
+  // se compara con undefined y no por si esta vacio.
+  if (edit.title !== undefined) patch.title_edited = edit.title.trim();
   if (edit.cues) {
     const clean = edit.cues
       .map((c) => ({ text: c.text.trim(), start: c.start, end: c.end }))

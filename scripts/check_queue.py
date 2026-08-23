@@ -253,6 +253,7 @@ async def main() -> None:
             clip["captions_edited"] = edited
             clip["sfx_edited"] = [{"name": "vineboom.mp3", "t": 3.5, "gain_db": -9}]
             clip["music_edited"] = "sneaky_snitch"
+            clip["title_edited"] = "TITULO A MANO 🧪"
             clip["render_status"] = "rerender_queued"
             await until(lambda: clip.get("render_status") in ("ready", "error")
                         and clip.get("storage_path") != first_path)
@@ -357,9 +358,11 @@ async def main() -> None:
         check("cambia la musica", clip.get("music") == "sneaky_snitch", str(clip.get("music")))
         check("marca los efectos como manuales", clip.get("sfx") == "manual",
               str(clip.get("sfx")))
+        check("guarda el titulo escrito a mano", clip.get("title") == "TITULO A MANO 🧪",
+              str(clip.get("title")))
         check("limpia los borradores",
               clip.get("captions_edited") is None and clip.get("sfx_edited") is None
-              and clip.get("music_edited") is None)
+              and clip.get("music_edited") is None and clip.get("title_edited") is None)
 
     print("\n" + ("Todo correcto" if ok else "Hay fallos"))
     raise SystemExit(0 if ok else 1)

@@ -57,8 +57,10 @@ export function ClipEditor({
     [clip.sfx_cues, clip.sfx_edited],
   );
   const baseMusic = clip.music_edited ?? (clip.music === "ninguna" ? "" : (clip.music ?? ""));
+  const baseTitle = clip.title_edited ?? clip.title ?? "";
 
   const [tab, setTab] = React.useState<"texto" | "sonido">("texto");
+  const [title, setTitle] = React.useState<string>(baseTitle);
   const [cues, setCues] = React.useState<Cue[]>(baseCues);
   const [sfx, setSfx] = React.useState<SfxCue[]>(baseSfx);
   const [music, setMusic] = React.useState<string>(baseMusic);
@@ -71,15 +73,17 @@ export function ClipEditor({
   // Al abrirlo, lo que se ve es lo que hay guardado ahora mismo.
   React.useEffect(() => {
     if (!open) return;
+    setTitle(baseTitle);
     setCues(baseCues);
     setSfx(baseSfx);
     setMusic(baseMusic);
-  }, [open, baseCues, baseSfx, baseMusic]);
+  }, [open, baseTitle, baseCues, baseSfx, baseMusic]);
 
+  const titleDirty = title.trim() !== baseTitle.trim();
   const cuesDirty = !sameCues(cues, baseCues);
   const sfxDirty = !sameSfx(sfx, baseSfx);
   const musicDirty = music !== baseMusic;
-  const dirty = cuesDirty || sfxDirty || musicDirty;
+  const dirty = titleDirty || cuesDirty || sfxDirty || musicDirty;
 
   function seek(t: number, index = -1) {
     const el = video.current;
@@ -103,6 +107,7 @@ export function ClipEditor({
     setSaving(true);
     try {
       await saveClipEdit(clip.id, {
+        title: titleDirty ? title : undefined,
         cues: cuesDirty ? cues : undefined,
         sfx: sfxDirty ? sfx : undefined,
         music: musicDirty ? music : undefined,
@@ -152,6 +157,23 @@ export function ClipEditor({
         </div>
 
         <div className="flex flex-col gap-3">
+          {/* El titulo vive fuera de las pestanas: es una linea, y es lo primero que se
+              lee en el feed, asi que se ve desde las dos. */}
+          <label className="flex flex-col gap-1">
+            <span className="flex items-baseline justify-between text-[11px] text-ink-faint">
+              <span>Título quemado en el vídeo</span>
+              <span className={`tnum ${title.length > 42 ? "text-warn" : ""}`}>
+                {title.length}/42
+              </span>
+            </span>
+            <input
+              value={title}
+              onChange={(e) => setTitle(e.target.value)}
+              placeholder="sin título"
+              className="h-9 w-full rounded-md border border-line bg-surface-2 px-2.5 text-[13px] text-ink outline-none focus:border-accent"
+            />
+          </label>
+
           <div className="flex gap-1.5">
             {tabs.map((t) => (
               <button

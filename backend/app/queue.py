@@ -222,17 +222,19 @@ class QueueWorker:
             cues = clip.get("captions") or []
         sfx = clip.get("sfx_edited")
         music = clip.get("music_edited")
+        titulo = clip.get("title_edited")
         log.info(
-            "re-render de %s (%d frases, %s efectos, musica %r)",
+            "re-render de %s (%d frases, %s efectos, musica %r, titulo %r)",
             moment_id, len(cues), "auto" if sfx is None else len(sfx),
             music if music is not None else "sin cambios",
+            titulo if titulo is not None else "sin cambios",
         )
         try:
             # En un contenedor recien clonado la base local esta vacia (no se versiona),
             # asi que el momento se reconstruye desde la ficha que se guardo al publicar.
             await service.ensure_moment(moment_id, clip.get("render_spec"))
             result = await service.render_moment_clip(
-                moment_id, cues=cues, sfx=sfx, music=music
+                moment_id, cues=cues, sfx=sfx, music=music, title=titulo
             )
             path = Path(render.clip_path(moment_id))
             if not path.exists():
@@ -254,12 +256,16 @@ class QueueWorker:
                 "captions_edited": None,
                 "sfx_edited": None,
                 "music_edited": None,
+                "title_edited": None,
                 "version": version,
                 "render_status": "ready",
                 "render_error": None,
             }
-            # `sfx`/`music` describen lo que suena: si la edicion los cambio, la fila
-            # tiene que contarlo, o la interfaz seguiria mostrando la eleccion del modelo.
+            # `title`/`sfx`/`music` describen lo que lleva puesto el clip: si la edicion
+            # los cambio, la fila tiene que contarlo, o la interfaz seguiria mostrando la
+            # eleccion del modelo.
+            if titulo is not None:
+                patch["title"] = titulo.strip()
             if sfx is not None:
                 patch["sfx"] = "manual" if sfx else "ninguno"
             if music is not None:

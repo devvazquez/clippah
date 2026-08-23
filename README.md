@@ -96,14 +96,17 @@ directamente: comparten un proyecto de Supabase.
   mp4 se guarda con un nombre legible en vez de abrirse en una pestaña. El nombre lleva
   delante la fecha del directo (`2026-08-22-pasando-a-un-metro….mp4`), así que en la
   carpeta de descargas quedan en orden.
-- **Los subtítulos y el sonido se editan desde la interfaz.** Cada clip guarda lo que
-  lleva puesto: las frases quemadas y los efectos con su segundo. El editor tiene dos
-  pestañas — corregir lo que Whisper oyó mal, y decidir qué suena: la pista de música (o
-  ninguna) y los efectos, que se colocan parando el vídeo donde tienen que sonar. Al
-  guardar, el worker vuelve a quemar el clip y lo sube como versión nueva (otra ruta, para
-  que ningún navegador siga sirviendo el mp4 viejo de su caché). De un clip, la clave anon
-  solo puede escribir esas cuatro columnas: no es RLS, que no distingue columnas, son
-  permisos por columna.
+- **El título, los subtítulos y el sonido se editan desde la interfaz.** Cada clip guarda
+  lo que lleva puesto: el título quemado, las frases y los efectos con su segundo. El
+  título es un campo suelto arriba, porque es una línea y es lo primero que se lee en el
+  feed; debajo hay dos pestañas — corregir lo que Whisper oyó mal, y decidir qué suena: la
+  pista de música (o ninguna) y los efectos, que se colocan parando el vídeo donde tienen
+  que sonar. Al guardar, el worker vuelve a quemar el clip y lo sube como versión nueva
+  (otra ruta, para que ningún navegador siga sirviendo el mp4 viejo de su caché). Un título
+  escrito a mano se quema aunque el momento no pasara por el LLM: lo ha decidido una
+  persona. De un clip, la clave anon solo puede escribir los cinco borradores
+  (`title_edited`, `captions_edited`, `sfx_edited`, `music_edited`, `render_status`): no es
+  RLS, que no distingue columnas, son permisos por columna.
 
 ### Montarlo
 
