@@ -135,7 +135,10 @@ jobs:
           test -x backend/.venv/bin/python || make setup-backend
           test -f backend/assets/fonts/Montserrat-Bold.ttf || make setup-font
           test -d backend/assets/emoji/apple || make setup-emoji
-          backend/.venv/bin/python -c "import aiosqlite, httpx, yt_dlp; print('dependencias ok')"
+          backend/.venv/bin/python -c "
+          from app.pipeline import branding, render, transcribe, vision
+          from app import queue, service
+          print('el motor importa entero')"
 
       # ---------------------------------------------------------------- comprobar
       # El turno de prueba: no toca Supabase ni gasta cuota, solo demuestra que en este

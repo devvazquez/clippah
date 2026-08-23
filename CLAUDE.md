@@ -191,6 +191,10 @@ nueva, para que ningún navegador sirva el mp4 viejo de su caché) y limpia el b
 - **Cuotas.** Groq: 7.200 s de audio/hora, 28.800/día. Gemini: mira `quota_usage` en la base
   antes de tirar. Si Groq se agota, el transcriptor se cae a Whisper local, que con el
   modelo grande tarda minutos por ventana y parece que se ha colgado.
+- **Una dependencia que no esta en `backend/pyproject.toml` no existe.** Pillow llevaba
+  tiempo importada en `branding.py` y sin declarar: funcionaba porque estaba de arrastre en
+  un venv viejo, y en el primer runner limpio el motor no arrancaba. Si anades un import de
+  fuera, declaralo, y comprueba con `pip install --dry-run -e backend` en un venv nuevo.
 - **`alimiter` de ffmpeg no es un techo** si no le pones `level=disabled`: por defecto
   también auto-nivela y sube la mezcla por su cuenta.
 - **No renderices sobre el clip de verdad al probar.** `check_queue.py` lo hizo y dejó en la

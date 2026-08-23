@@ -11,6 +11,10 @@ dependencies = [
     "aiosqlite>=0.20",
     "httpx>=0.27",
     "numpy>=1.26",
+    # La usan `pipeline/branding.py` (el titulo y la barra social) y `pipeline/vision.py`.
+    # Estaba de arrastre en un venv viejo y no declarada: en un runner limpio el import
+    # de PIL reventaba el arranque entero.
+    "pillow>=10.4",
     "soundfile>=0.12",
     "yt-dlp>=2024.8.6",
     "python-multipart>=0.0.12",
