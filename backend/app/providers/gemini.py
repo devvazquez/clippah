@@ -317,6 +317,9 @@ class GeminiScorer:
             parts.append({"inline_data": {"mime_type": "image/jpeg",
                                           "data": base64.b64encode(path.read_bytes()).decode("ascii")}})
         await self.limiter.acquire(1100 * len(frames) + 600)
+        preferred = settings.vision_model or ""
+        import logging
+        logging.getLogger(__name__).info(f"Vision calibrate using model: {preferred or 'default'}")
         body = {
             "contents": [{"role": "user", "parts": parts}],
             "generationConfig": {
@@ -326,7 +329,7 @@ class GeminiScorer:
                 "maxOutputTokens": 2048,
             },
         }
-        data = _raw_json(await self._generate(body, timeout=180.0, models=self._model_chain()))
+        data = _raw_json(await self._generate(body, timeout=180.0, models=self._model_chain(preferred)))
         if not isinstance(data, dict):
             return VisionContext()
         return VisionContext(
@@ -371,6 +374,8 @@ class GeminiScorer:
             },
         }
         preferred = settings.vision_model or ""
+        import logging
+        logging.getLogger(__name__).info(f"Vision look_at_frames using model: {preferred or 'default'}")
         payload = await self._generate(
             body, timeout=240.0, models=self._model_chain(preferred)
         )

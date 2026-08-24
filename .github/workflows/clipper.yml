@@ -161,6 +161,11 @@ jobs:
           test -f backend/assets/fonts/Montserrat-Bold.ttf || make setup-font
           test -d backend/assets/emoji/apple || make setup-emoji
           backend/.venv/bin/python -c "
+          from app.config import settings
+          print('vision_model:', settings.vision_model)
+          print('gemini_model:', settings.gemini_model)
+          print('gemini_fallback_model:', settings.gemini_fallback_model)
+          print('ytdlp_cookies_from_browser:', repr(settings.ytdlp_cookies_from_browser))
           from app.pipeline import branding, render, transcribe, vision
           from app import queue, service
           print('el motor importa entero')"
@@ -186,6 +191,8 @@ jobs:
         if: ${{ inputs.smoke != true && steps.cola.outputs.hay == 'si' }}
         run: |
           set -o pipefail
+          # Enable debug logging
+          export LOG_LEVEL=DEBUG
           backend/.venv/bin/python scripts/drain.py 2>&1 | tee turno.log
 
       - name: Resumen
