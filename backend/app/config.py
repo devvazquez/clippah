@@ -93,16 +93,9 @@ class Settings(BaseSettings):
     # --- yt-dlp ---
     # YouTube pide verificacion anti-bot desde IPs de datacenter (y a veces desde
     # conexiones domesticas). Pasar cookies del navegador lo resuelve.
-    ytdlp_cookies_from_browser: str = "chrome"   # p.ej. "firefox", "chrome", "brave:Default"
-
-    @field_validator("ytdlp_cookies_from_browser")
-    @classmethod
-    def _validate_browser(cls, v: str) -> str:
-        v = v.strip().lower()
-        supported = {"brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale"}
-        if v and v not in supported:
-            raise ValueError(f"yt-dlp browser '{v}' no es compatible. Use uno de: {', '.join(sorted(supported))}")
-        return v
+    # En CI no hay perfil de navegador: dejar vacio para desactivar cookies.
+    # En local, pon el navegador en .env si hace falta: YTDLP_COOKIES_FROM_BROWSER=chrome
+    ytdlp_cookies_from_browser: str = ""
     ytdlp_cookies_file: str = ""           # ruta a un cookies.txt en formato Netscape
     ytdlp_extra_args: str = ""             # argumentos extra, tal cual
 
