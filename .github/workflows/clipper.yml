@@ -125,6 +125,17 @@ jobs:
           command -v ffprobe
           ffmpeg -version | head -1
 
+      # yt-dlp necesita cookies de navegador para Twitch/YouTube. Ubuntu-latest no trae
+      # Chrome: se instala aqui para que `ytdlp_cookies_from_browser: "chrome"` funcione.
+      - name: Chrome (para cookies yt-dlp)
+        if: ${{ inputs.smoke != true && steps.cola.outputs.hay == 'si' }}
+        run: |
+          if ! command -v google-chrome >/dev/null && ! command -v chromium >/dev/null; then
+            sudo apt-get update -qq
+            sudo apt-get install -y -qq chromium-browser
+          fi
+          command -v chromium || command -v google-chrome
+
       # El venv y las fuentes no cambian entre ejecuciones: cachearlos quita ~90 s de
       # instalacion a cada turno.
       - name: Cache del venv
