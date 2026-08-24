@@ -63,8 +63,8 @@ jobs:
       GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
       # En CI no hay perfil de Chrome con cookies: desactivar cookies de navegador.
       # yt-dlp funciona sin cookies para VODs publicos de Twitch; si hace falta,
-      # se puede añadir YT_DLP_COOKIES_FILE con un cookies.txt en Netscape format.
-      YT_DLP_COOKIES_FROM_BROWSER: ""
+      # se puede añadir YTDLP_COOKIES_FILE con un cookies.txt en Netscape format.
+      YTDLP_COOKIES_FROM_BROWSER: ""
       # En un runner no hay a quien preguntar: que no se quede esperando nada por consola.
       PYTHONUNBUFFERED: "1"
 
