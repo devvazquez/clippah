@@ -93,7 +93,16 @@ class Settings(BaseSettings):
     # --- yt-dlp ---
     # YouTube pide verificacion anti-bot desde IPs de datacenter (y a veces desde
     # conexiones domesticas). Pasar cookies del navegador lo resuelve.
-    ytdlp_cookies_from_browser: str = ""   # p.ej. "firefox", "chrome", "brave:Default"
+    ytdlp_cookies_from_browser: str = "chrome"   # p.ej. "firefox", "chrome", "brave:Default"
+
+    @field_validator("ytdlp_cookies_from_browser")
+    @classmethod
+    def _validate_browser(cls, v: str) -> str:
+        v = v.strip().lower()
+        supported = {"brave", "chrome", "chromium", "edge", "firefox", "opera", "safari", "vivaldi", "whale"}
+        if v and v not in supported:
+            raise ValueError(f"yt-dlp browser '{v}' no es compatible. Use uno de: {', '.join(sorted(supported))}")
+        return v
     ytdlp_cookies_file: str = ""           # ruta a un cookies.txt en formato Netscape
     ytdlp_extra_args: str = ""             # argumentos extra, tal cual
 
@@ -142,7 +151,7 @@ class Settings(BaseSettings):
     vision_batch: int = 15               # fotogramas por peticion
     vision_min_confidence: float = 60.0
     vision_max_hits: int = 12            # candidatos visuales aceptados como maximo
-    vision_model: str = ""               # vacio = usa gemini_model
+    vision_model: str = "gemini-flash-latest"  # modelo con soporte de vision
 
     # --- Render del clip (vertical 9:16 con subtitulos quemados) ---
     # Medido sobre los 30 clips mas vistos de auronplay e ibai: mediana de 26 s los dos.
